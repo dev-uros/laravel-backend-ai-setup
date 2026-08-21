@@ -20,6 +20,8 @@ enum UserLogEvent: string
     case Deactivated = 'user.deactivated';
     case Reactivated = 'user.reactivated';
     case ActivationLinkSent = 'user.activation_link_sent';
+    case AvatarUpdated = 'user.avatar_updated';
+    case AvatarRemoved = 'user.avatar_removed';
     case Activated = 'user.activated';
     case PasswordReset = 'user.password_reset';
 }

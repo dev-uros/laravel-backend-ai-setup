@@ -34,3 +34,4 @@ Before planning or editing, find the row whose globs match the file's path and r
 | {app/Services/**,app/Http/Controllers/**} | .ai/rules/services-http-controllers.md |
 | tests/** | .ai/rules/tests.md |
 | {app/Services/User/**,app/Exceptions/**} | .ai/rules/user-exceptions.md |
+| {app/Services/User/**,app/Models/User.php,app/Http/Requests/User/**} | .ai/rules/user.md |

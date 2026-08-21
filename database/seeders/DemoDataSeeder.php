@@ -3,16 +3,21 @@
 namespace Database\Seeders;
 
 use App\Data\ActorData;
+use App\Data\User\UpdateUserAvatarData;
 use App\Enums\LoginOutcome;
 use App\Enums\UserLogEvent;
 use App\Enums\UserRole;
 use App\Models\User;
 use App\Services\Auth\RecordLoginAttemptService;
+use App\Services\User\UpdateUserAvatarService;
 use App\Services\UserLog\RecordUserLogService;
 use Carbon\CarbonImmutable;
 use Closure;
 use Illuminate\Database\Seeder;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
+use Intervention\Image\ImageManager;
+use Intervention\Image\Interfaces\ImageInterface;
 
 /**
  * A believable few weeks of history, so the frontend has something to render.
@@ -44,6 +49,10 @@ class DemoDataSeeder extends Seeder
 
     private RecordLoginAttemptService $recordAttempt;
 
+    private UpdateUserAvatarService $updateAvatar;
+
+    private ImageManager $images;
+
     private User $admin;
 
     public function run(): void
@@ -56,6 +65,8 @@ class DemoDataSeeder extends Seeder
 
         $this->recordLog = app(RecordUserLogService::class);
         $this->recordAttempt = app(RecordLoginAttemptService::class);
+        $this->updateAvatar = app(UpdateUserAvatarService::class);
+        $this->images = app(ImageManager::class);
 
         $this->admin = User::query()->where('role', UserRole::Admin)->orderBy('id')->first()
             ?? throw new \RuntimeException('Run UserSeeder first: the trail needs an administrator to attribute changes to.');
@@ -80,6 +91,7 @@ class DemoDataSeeder extends Seeder
 
         $this->activated($user, 44);
         $this->signsInRegularly($user, from: 43, times: 22);
+        $this->uploadsTheirOwnAvatar($user, 41, '#3f51b5');
     }
 
     private function plainUsers(): void
@@ -98,6 +110,8 @@ class DemoDataSeeder extends Seeder
                 'email' => 'marko.petrovic-ilic@fifthguild.com',
             ]);
         });
+
+        $this->uploadsTheirOwnAvatar($marko, 11, '#00796b');
 
         $ana = $this->createUser('Ana', 'Nikolić', 'ana.nikolic@fifthguild.com', 30);
         $this->activated($ana, 30);
@@ -146,6 +160,9 @@ class DemoDataSeeder extends Seeder
         $this->activated($user, 40);
         $this->signsInRegularly($user, from: 39, times: 11, until: 8);
 
+        /** Their picture was put up for them, back when they still worked here. */
+        $this->adminUploadsAvatarFor($user, 35, '#5d4037');
+
         $this->at($this->moment(7, 16, 45), function () use ($user): void {
             $user->tokens()->delete();
             $user->forceFill(['deactivated_at' => now()])->save();
@@ -191,6 +208,8 @@ class DemoDataSeeder extends Seeder
                 ['deactivated_at' => $before], ['deactivated_at' => null]);
         });
 
+        $this->uploadsTheirOwnAvatar($user, 28, '#c2185b');
+
         $this->at($this->moment(15, 9, 50), function () use ($user): void {
             $user->forceFill(['role' => UserRole::Admin])->save();
 
@@ -227,6 +246,80 @@ class DemoDataSeeder extends Seeder
                 $this->recordAttempt->handle($marko, $marko->email, LoginOutcome::InvalidCredentials, $this->stranger());
             });
         }
+    }
+
+    /**
+     * The user sets their own picture, which is the ordinary case: the avatar is
+     * the one thing a plain user may change without an administrator.
+     *
+     * Half the demo accounts deliberately have none -- the frontend has to draw
+     * its placeholder for those, and that is a state worth seeing.
+     */
+    private function uploadsTheirOwnAvatar(User $user, int $daysAgo, string $colour): void
+    {
+        $this->putAvatarOn($user, $daysAgo, $colour, $user, $this->theirDevice()->actingAs($user->id));
+    }
+
+    /**
+     * An administrator puts a picture on somebody else's account, so the trail
+     * has one of each kind of actor on `user.avatar_updated`.
+     */
+    private function adminUploadsAvatarFor(User $user, int $daysAgo, string $colour): void
+    {
+        $this->putAvatarOn($user, $daysAgo, $colour, $this->admin, $this->actor());
+    }
+
+    /**
+     * Through UpdateUserAvatarService, exactly as a request would: the file is
+     * re-encoded to a square WebP, written to the `public` disk and recorded in
+     * the trail. Nothing here knows what the encoding rules are, so demo avatars
+     * cannot drift from real ones.
+     */
+    private function putAvatarOn(User $user, int $daysAgo, string $colour, User $caller, ActorData $actor): void
+    {
+        $file = $this->drawAvatar($colour);
+
+        try {
+            $this->at($this->moment($daysAgo, 10, 25), function () use ($user, $file, $caller, $actor): void {
+                $this->updateAvatar->handle($user->id, new UpdateUserAvatarData($file), $caller, $actor);
+            });
+        } finally {
+            @unlink($file->getPathname());
+        }
+    }
+
+    /**
+     * A stand-in portrait: a head and a pair of shoulders on a flat colour.
+     *
+     * Deliberately not a solid square -- the point of demo data is to look like
+     * the real screen, and it also proves the crop is doing something. It is
+     * drawn 900x600 rather than square so the service has a rectangle to cover.
+     */
+    private function drawAvatar(string $colour): UploadedFile
+    {
+        $image = $this->images->create(900, 600)->fill($colour);
+
+        $this->drawFigure($image);
+
+        $path = tempnam(sys_get_temp_dir(), 'demo-avatar').'.png';
+
+        $image->toPng()->save($path);
+
+        /** test: true -- there was no HTTP upload, so the move() check is off. */
+        return new UploadedFile($path, 'profilna.png', 'image/png', null, true);
+    }
+
+    private function drawFigure(ImageInterface $image): void
+    {
+        $image->drawCircle(450, 250, function ($circle): void {
+            $circle->radius(110);
+            $circle->background('rgba(255, 255, 255, 0.85)');
+        });
+
+        $image->drawEllipse(450, 620, function ($ellipse): void {
+            $ellipse->size(420, 380);
+            $ellipse->background('rgba(255, 255, 255, 0.85)');
+        });
     }
 
     /**

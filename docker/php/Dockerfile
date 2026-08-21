@@ -19,8 +19,12 @@ RUN apt-get update \
 
 # pdo_pgsql: Postgres. redis: phpredis (cache + queue + Horizon).
 # pcntl + posix: required by Horizon for signal handling and process control.
+# gd + exif: Intervention Image, used to re-encode uploaded avatars to WebP.
+# exif is what lets it honour a photo's orientation flag instead of rotating it.
 RUN install-php-extensions \
         bcmath \
+        exif \
+        gd \
         intl \
         opcache \
         pcntl \

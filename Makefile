@@ -142,6 +142,11 @@ migrate: ## Run pending migrations
 fresh: ## Drop everything and re-migrate with seeders (data loss)
 	$(PHP) php artisan migrate:fresh --seed
 
+.PHONY: storage-link
+storage-link: ## Link public/storage -> storage/app/public (avatars are served from there)
+	@$(PHP) sh -c 'test -L public/storage || ln -s ../storage/app/public public/storage'
+	@echo "public/storage -> storage/app/public"
+
 .PHONY: demo
 demo: ## Fill the database with demo users, edit history and login history
 	$(PHP) php artisan db:seed --class=DemoDataSeeder
@@ -176,6 +181,7 @@ setup: ## First-time setup: build, boot, install deps, migrate
 	$(PHP) composer install
 	@grep -q '^APP_KEY=base64:' .env || $(PHP) php artisan key:generate
 	$(PHP) php artisan migrate --force
+	@$(MAKE) --no-print-directory storage-link
 	@$(MAKE) --no-print-directory up
 
 .PHONY: wait-db

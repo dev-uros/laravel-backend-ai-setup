@@ -5,7 +5,9 @@ namespace Tests\Feature\Api\User;
 use App\Enums\UserRole;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Storage;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
@@ -92,6 +94,34 @@ class UsersAuthorizationTest extends TestCase
         $existing = User::factory()->create();
 
         $this->actingAsUser()->getJson($this->uriFor($uri, $existing))->assertOk();
+    }
+
+    /**
+     * The one exception to the split above: a plain user may write their own
+     * avatar, and only their own. UserPolicy opens the door for everyone
+     * signed in -- it never sees the target row -- so the rule itself lives in
+     * AuthorizeAvatarChangeService, and both halves of it are asserted in
+     * UpdateUserAvatarTest and DeleteUserAvatarTest.
+     */
+    public function test_a_plain_user_may_write_their_own_avatar_and_nobody_elses(): void
+    {
+        Storage::fake(User::AVATAR_DISK);
+
+        $user = User::factory()->create();
+        $other = User::factory()->create();
+
+        $this->actingAsUser($user)
+            ->withHeader('Accept', 'application/json')
+            ->post(route('users.avatar.update', $user), [
+                'avatar' => UploadedFile::fake()->image('profilna.jpg', 300, 300),
+            ])
+            ->assertOk();
+
+        $this->withHeader('Accept', 'application/json')
+            ->post(route('users.avatar.update', $other), [
+                'avatar' => UploadedFile::fake()->image('profilna.jpg', 300, 300),
+            ])
+            ->assertForbidden();
     }
 
     /**

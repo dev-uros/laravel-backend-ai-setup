@@ -11,6 +11,7 @@ use App\Models\UserLog;
 use Database\Seeders\DemoDataSeeder;
 use Database\Seeders\UserSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 /**
@@ -27,6 +28,12 @@ class DemoDataSeederTest extends TestCase
      */
     private function seedDemo(): void
     {
+        /**
+         * The seeder puts real avatars on the `public` disk. Faked here, or a
+         * test run would leave files in storage/app/public that nothing removes.
+         */
+        Storage::fake(User::AVATAR_DISK);
+
         $this->seed(UserSeeder::class);
         $this->seed(DemoDataSeeder::class);
     }
@@ -41,6 +48,37 @@ class DemoDataSeederTest extends TestCase
         $this->assertGreaterThanOrEqual(2, $users->where('role', UserRole::Admin)->count());
         $this->assertTrue($users->contains(fn (User $u): bool => $u->email_verified_at === null), 'one account never activated');
         $this->assertTrue($users->contains(fn (User $u): bool => ! $u->isActive()), 'one account switched off');
+    }
+
+    /**
+     * Some accounts have a picture and some do not: the frontend has to render
+     * both, and the placeholder is as much a state as the image is.
+     */
+    public function test_some_accounts_have_an_avatar_and_some_do_not(): void
+    {
+        $this->seedDemo();
+
+        $users = User::query()->get();
+        $withAvatar = $users->filter(fn (User $u): bool => $u->avatar_path !== null);
+
+        $this->assertGreaterThanOrEqual(2, $withAvatar->count(), 'nothing to render an avatar from');
+        $this->assertGreaterThanOrEqual(2, $users->count() - $withAvatar->count(), 'no account left for the placeholder');
+
+        foreach ($withAvatar as $user) {
+            Storage::disk(User::AVATAR_DISK)->assertExists($user->avatar_path);
+            $this->assertStringEndsWith('.webp', $user->avatar_path);
+        }
+
+        /**
+         * The upload went through UpdateUserAvatarService, so the trail knows
+         * about it -- by the account itself in most cases, by an administrator
+         * in at least one.
+         */
+        $entries = UserLog::query()->where('event', UserLogEvent::AvatarUpdated)->get();
+
+        $this->assertCount($withAvatar->count(), $entries);
+        $this->assertTrue($entries->contains(fn (UserLog $e): bool => $e->actor_id === $e->user_id), 'nobody set their own');
+        $this->assertTrue($entries->contains(fn (UserLog $e): bool => $e->actor_id !== $e->user_id), 'no admin-set avatar');
     }
 
     public function test_every_account_signs_in_with_the_documented_password(): void

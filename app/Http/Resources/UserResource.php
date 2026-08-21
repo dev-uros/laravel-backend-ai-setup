@@ -30,6 +30,7 @@ class UserResource extends JsonResource
             'surname' => $this->surname,
             'email' => $this->email,
             'role' => $this->role,
+            'avatar_url' => $this->avatarUrl(),
             'deactivated_at' => $this->deactivated_at?->toIso8601String(),
             'email_verified_at' => $this->email_verified_at?->toIso8601String(),
             'created_at' => $this->created_at->toIso8601String(),

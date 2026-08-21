@@ -33,6 +33,8 @@ class UsersRequireAuthenticationTest extends TestCase
             'deactivate' => ['postJson', '/api/users/1/deactivate'],
             'reactivate' => ['postJson', '/api/users/1/reactivate'],
             'change role' => ['putJson', '/api/users/1/role'],
+            'set avatar' => ['postJson', '/api/users/1/avatar'],
+            'remove avatar' => ['deleteJson', '/api/users/1/avatar'],
             'logs' => ['getJson', '/api/users/1/logs'],
             'logins' => ['getJson', '/api/users/1/logins'],
         ];

@@ -2,10 +2,12 @@
 
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\User\DeactivateUserController;
+use App\Http\Controllers\User\DeleteUserAvatarController;
 use App\Http\Controllers\User\IndexLoginAttemptsController;
 use App\Http\Controllers\User\IndexUserLogsController;
 use App\Http\Controllers\User\ReactivateUserController;
 use App\Http\Controllers\User\ResendActivationController;
+use App\Http\Controllers\User\UpdateUserAvatarController;
 use App\Http\Controllers\User\UpdateUserRoleController;
 use App\Http\Controllers\UserController;
 use App\Http\Middleware\EnsureAccountIsActive;
@@ -97,6 +99,25 @@ Route::middleware(['auth:sanctum', EnsureAccountIsActive::class])->group(functio
         ->middleware('can:changeRole,'.User::class)
         ->whereNumber('id')
         ->name('users.role.update');
+
+    /**
+     * The avatar is the one thing a user may change without being an
+     * administrator -- on their own account. The policy only opens the door;
+     * whose avatar the caller may touch depends on the target row, so it is
+     * settled in AuthorizeAvatarChangeService.
+     *
+     * POST rather than PUT because the body is multipart/form-data, which PHP
+     * only parses on a POST.
+     */
+    Route::post('users/{id}/avatar', UpdateUserAvatarController::class)
+        ->middleware('can:changeAvatar,'.User::class)
+        ->whereNumber('id')
+        ->name('users.avatar.update');
+
+    Route::delete('users/{id}/avatar', DeleteUserAvatarController::class)
+        ->middleware('can:changeAvatar,'.User::class)
+        ->whereNumber('id')
+        ->name('users.avatar.destroy');
 
     /**
      * Switching an account off is not a delete, so it is not `destroy`: the row

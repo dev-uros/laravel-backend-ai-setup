@@ -196,6 +196,8 @@ app/
   Repositories/Contracts/UserRepositoryInterface.php
   Repositories/UserRepository.php          implements the interface
   Services/User/StoreUserService.php       one class per use case, one handle()
+  Services/User/UpdateUserAvatarService.php    re-encodes the upload, swaps the file
+  Services/User/AuthorizeAvatarChangeService.php  whose avatar a caller may change
   Services/User/SendActivationLinkService.php  shared by store and resend
   Services/UserLog/RecordUserLogService.php    the only way into the trail
   Policies/UserPolicy.php                  applied by `can:` middleware on the routes
@@ -461,6 +463,61 @@ The differences in that table are the point, not inconsistency:
 
 Reactivating does not give back the revoked tokens; the user logs in again.
 
+## Profile pictures
+
+A user account can carry an avatar, and the frontend gets it back as a URL:
+
+```
+POST   /api/users/{id}/avatar   multipart/form-data, field `avatar`
+DELETE /api/users/{id}/avatar
+-> {message, data: {..., avatar_url: "http://localhost:8000/storage/avatars/01K3....webp"}}
+```
+
+`users.avatar_path` holds the path on the disk, never the URL — a stored URL
+would freeze the host that was current when the file went up. `UserResource`
+renders it through `User::avatarUrl()`, which answers null when there is none.
+
+**The upload is never what gets stored.** `UpdateUserAvatarService` re-encodes
+every file to a square 512x512 WebP at quality 80 through Intervention Image
+(`cover()`, so a portrait photo is centre-cropped rather than squashed). A photo
+off a phone arrives as several megabytes and lands as a few dozen kilobytes;
+without that, every row of the users list would pay for pixels nothing renders.
+The GD driver is bound to `ImageManager` in `AppServiceProvider` — Intervention
+cannot be autowired, it needs a driver — and `gd` + `exif` are installed in
+`docker/php/Dockerfile` for it.
+
+**This is the one endpoint a plain user may write to, and only for themselves.**
+`UserPolicy::changeAvatar` returns true for anyone signed in, because the policy
+never sees the target row; which account the caller may touch is settled in
+`AuthorizeAvatarChangeService`, shared by both use cases so the rule cannot drift
+between them. An administrator may change anyone's; anyone else gets 403
+(`CannotChangeAnotherUsersAvatarException`) for somebody else's account.
+
+Order of operations, and the reason for it:
+
+- the file is written **before** the row, and deleted again if the transaction
+  throws — otherwise a failed write leaves an image nothing points at;
+- the **previous** file is deleted **after** the commit, never before, or a
+  failed write would leave the user with a broken image;
+- the filename is a ULID, so a URL is not guessable from a user's id and a
+  replaced avatar can never be served stale from a cache under the old name.
+
+Removing an avatar an account does not have answers 200 and records nothing —
+the request asked for a state the account is already in, the same way
+`UpdateUserService` stays quiet when a form is saved untouched.
+
+Files live on the `public` disk (`storage/app/public/avatars`), served straight
+by nginx through the `public/storage` symlink — `make storage-link`, which
+`make setup` runs. That makes an avatar URL readable by anyone who has it: an
+`<img>` tag sends no bearer token, so anything behind `auth:sanctum` could not be
+rendered without proxying every avatar through the SPA. Accepted deliberately;
+do not put anything else on that disk without deciding the same thing again.
+
+Validation lives in `UpdateUserAvatarRequest`: JPEG, PNG, WebP or GIF, at least
+64x64, up to 5 MB. SVG is refused — it is a document that can carry script — and
+the formats are listed explicitly rather than left to the `image` rule, which
+also accepts AVIF, HEIC and HEIF, formats GD may not have been built to decode.
+
 ## The audit trail
 
 Every write to a user account leaves a row in `user_logs`, and an administrator
@@ -475,6 +532,8 @@ user.created            actor: admin   new: {name, surname, email, role}
 user.updated            actor: admin   old/new: only the fields that moved
 user.role_changed       actor: admin   old/new: {role}
 user.deactivated        actor: admin   old/new: {deactivated_at}
+user.avatar_updated     actor: admin, or the account itself   old/new: {avatar_path}
+user.avatar_removed     actor: admin, or the account itself   old/new: {avatar_path}
 user.reactivated        actor: admin
 user.activation_link_sent  actor: admin   no diff -- nothing on the row changed
 user.activated          actor: the account itself
@@ -707,12 +766,19 @@ six weeks of history — every state the screens have to render: a never-activat
 account, a switched-off one, a promotion, a renamed user, failed logins and a
 handful of attempts on addresses nobody uses.
 
+Half the accounts have an avatar and half deliberately do not, so the frontend
+has to draw its placeholder as well as an image. The pictures are generated —
+a head and shoulders on a flat colour, drawn 900x600 so the crop has something
+to do — and they go in through `UpdateUserAvatarService` like any upload, which
+is also what puts `user.avatar_updated` in the trail: by the account itself for
+most, by an administrator for one.
+
 It is deliberately **not** in `DatabaseSeeder`: a fresh install gets one real
 administrator and nothing else.
 
-Entries go in through `RecordUserLogService` and `RecordLoginAttemptService`, the
-same services the application uses, so demo history cannot drift from real
-history. Only the clock is faked: each write runs inside `Carbon::setTestNow()`,
+Entries go in through `RecordUserLogService`, `RecordLoginAttemptService` and
+`UpdateUserAvatarService`, the same services the application uses, so demo
+history cannot drift from real history. Only the clock is faked: each write runs inside `Carbon::setTestNow()`,
 which is what backdates `created_at`, `deactivated_at` and the login timestamps
 without writing any dates by hand.
 

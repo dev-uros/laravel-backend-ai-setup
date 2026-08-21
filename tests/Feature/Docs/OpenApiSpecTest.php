@@ -124,6 +124,26 @@ class OpenApiSpecTest extends TestCase
         }
     }
 
+    /**
+     * The avatar is the one field on a user that is rendered by a method rather
+     * than read off a column, and most accounts have none -- so a client
+     * generated from a spec that promised a string would break on the majority
+     * of the list.
+     */
+    public function test_the_avatar_url_is_documented_as_nullable(): void
+    {
+        $user = User::factory()->create();
+
+        $body = $this->actingAsAdmin($this->admin)
+            ->getJson(route('users.show', $user))
+            ->assertOk()
+            ->json('data');
+
+        $this->assertArrayHasKey('avatar_url', $body);
+        $this->assertNull($body['avatar_url']);
+        $this->assertSame(['string', 'null'], $this->schema('UserResource')['properties']['avatar_url']['type']);
+    }
+
     public function test_a_log_entry_documents_its_diffs_as_objects(): void
     {
         $user = $this->userWithHistory();

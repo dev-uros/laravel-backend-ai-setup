@@ -76,15 +76,18 @@ ekrani moraju da pokriju. **Lozinka je `password` za sve.**
 | nalog | uloga | stanje |
 | --- | --- | --- |
 | `uros.minic@fifthguild.com` | admin | osnovni nalog |
-| `milica.jovanovic@fifthguild.com` | admin | aktivan, redovno se prijavljuje |
-| `teodora.markovic@fifthguild.com` | admin | unapređena iz `user`, sa tragom |
-| `marko.petrovic-ilic@fifthguild.com` | user | menjao prezime i email |
+| `milica.jovanovic@fifthguild.com` | admin | aktivan, redovno se prijavljuje, **ima sliku** |
+| `teodora.markovic@fifthguild.com` | admin | unapređena iz `user`, sa tragom, **ima sliku** |
+| `marko.petrovic-ilic@fifthguild.com` | user | menjao prezime i email, **ima sliku** |
 | `ana.nikolic@fifthguild.com` | user | resetovala lozinku |
 | `stefan.djordjevic@fifthguild.com` | user | aktivan |
 | `jovana.stankovic@fifthguild.com` | user | **nikad aktiviran**, dva podsetnika |
-| `nikola.ilic@fifthguild.com` | user | **isključen**, sa pokušajem prijave posle toga |
+| `nikola.ilic@fifthguild.com` | user | **isključen**, sliku mu je postavio admin |
 
-Uz to ide 28 zapisa u istoriji izmena i preko 100 prijava — uspešnih, promašenih
+Polovina naloga ima profilnu sliku, polovina nema — i jedno i drugo mora da se
+prikaže, pa je i placeholder stanje koje se vidi u demo podacima.
+
+Uz to ide 32 zapisa u istoriji izmena i preko 100 prijava — uspešnih, promašenih
 lozinki, jedna na isključen nalog, i pet na adrese koje ne postoje (te nemaju
 korisnika i vidljive su samo u bazi, ne kroz `/users/{id}/logins`).
 
@@ -135,15 +138,19 @@ export async function api<T>(
   path: string,
   options: { method?: string; body?: unknown } = {},
 ): Promise<T> {
+  // Slanje fajla (profilna slika) ide kao FormData, ne kao JSON. Content-Type
+  // se tada NE postavlja rucno -- browser sam dodaje multipart granicu.
+  const isForm = options.body instanceof FormData
+
   const response = await fetch(`${BASE}${path}`, {
     method: options.method ?? 'GET',
     headers: {
       // Bez ovoga Laravel ume da odgovori HTML-om umesto JSON-om.
       Accept: 'application/json',
-      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(options.body && !isForm ? { 'Content-Type': 'application/json' } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-    body: options.body ? JSON.stringify(options.body) : undefined,
+    body: isForm ? (options.body as FormData) : options.body ? JSON.stringify(options.body) : undefined,
   })
 
   // Svaki odgovor nosi ovaj header. Sačuvaj ga uz grešku: sa njim se u logovima
@@ -206,6 +213,7 @@ export type User = {
   surname: string
   email: string
   role: UserRole
+  avatar_url: string | null       // null = nema sliku, nacrtaj placeholder
   deactivated_at: string | null   // null = nalog radi
   email_verified_at: string | null // null = nalog nije aktiviran
   created_at: string
@@ -313,6 +321,8 @@ bi to odalo**. Prikaži poruku koju API vrati, doslovno.
 | kreiranje | `POST /users` | admin |
 | izmena | `PUT /users/{id}` | admin |
 | promena uloge | `PUT /users/{id}/role` | admin |
+| postavljanje profilne | `POST /users/{id}/avatar` | admin za svakoga, korisnik za sebe |
+| brisanje profilne | `DELETE /users/{id}/avatar` | admin za svakoga, korisnik za sebe |
 | isključivanje | `POST /users/{id}/deactivate` | admin |
 | uključivanje | `POST /users/{id}/reactivate` | admin |
 | ponovo pošalji aktivacioni mejl | `POST /users/{id}/resend-activation` | admin |
@@ -339,6 +349,37 @@ prikaži ga kao takvog i ponudi dugme za vraćanje. Njegovi tokeni su poništeni
 istog trena.
 
 **`{id}` mora biti broj**, inače je 404 pre nego što zahtev uđe u aplikaciju.
+
+### Profilna slika
+
+Jedina izmena koju korisnik bez `admin` uloge sme da uradi — i to **samo nad
+sopstvenim nalogom**; tuđi nalog je 403. Admin sme svima.
+
+```ts
+const form = new FormData()
+form.append('avatar', file)   // <input type="file" accept="image/*">
+
+const { data } = await api<ApiResponse<User>>(`/users/${id}/avatar`, {
+  method: 'POST',
+  body: form,
+})
+// data.avatar_url je nova adresa slike
+
+await api<ApiResponse<User>>(`/users/${id}/avatar`, { method: 'DELETE' })
+```
+
+- `POST`, ne `PUT` — telo je `multipart/form-data`, polje se zove `avatar`.
+- Prima JPEG, PNG, WebP ili GIF, najmanje 64x64, do 5 MB. SVG se ne prima.
+- **Backend sam obrađuje sliku**: seče je na kvadrat 512x512 i pretvara u WebP.
+  Ne moraš ništa da radiš u browseru — pošalji original kako je izabran.
+- `avatar_url` je zato uvek `.webp` i menja se pri svakoj izmeni (ime fajla je
+  nasumično), pa keš nikad ne servira staru sliku. Ne keširaj URL sam i ne
+  sastavljaj ga od `id`-ja — uzmi ga iz odgovora.
+- Stara slika se briše sa servera čim nova prođe.
+- Brisanje slike koje nalog nema takođe vraća 200 — stanje je već takvo.
+- URL je javan (slika se prikazuje u `<img>`, a `<img>` ne šalje token). Ime
+  fajla je nasumično, pa se ne može pogoditi iz `id`-ja ili mejla, ali nemoj tu
+  stavljati ništa poverljivo.
 
 ### Paginirani odgovori
 
@@ -379,6 +420,8 @@ pogrešio email ili lozinku; ne pokušavaj da to razlučiš i ne pogađaj u UI-j
   su pisane za krajnjeg korisnika i na srpskom.
 - ❌ Ne pretpostavljaj da `forgot-password` odgovor išta govori o postojanju naloga.
 - ❌ Ne šalji lozinku pri kreiranju korisnika; taj endpoint je ne prima.
+- ❌ Ne šalji profilnu sliku kao base64 u JSON-u i ne postavljaj `Content-Type`
+  ručno kod `FormData`; endpoint prima `multipart/form-data`.
 
 ---
 

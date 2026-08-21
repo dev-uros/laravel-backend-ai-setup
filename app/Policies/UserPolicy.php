@@ -87,6 +87,17 @@ class UserPolicy
         return false;
     }
 
+    /**
+     * The one write a plain user may make. This says only that they may change
+     * *an* avatar; whose they may change is AuthorizeAvatarChangeService's
+     * business, because the answer depends on the target row and these methods
+     * never see one.
+     */
+    public function changeAvatar(User $user): bool
+    {
+        return true;
+    }
+
     public function deactivate(User $user): bool
     {
         return false;

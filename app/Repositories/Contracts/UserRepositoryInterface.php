@@ -54,6 +54,15 @@ interface UserRepositoryInterface
     public function updateRole(User $user, UserRole $role): User;
 
     /**
+     * Point the user at a new avatar file, or at none.
+     *
+     * forceFill because `avatar_path` is deliberately not fillable: the only
+     * thing allowed to name a file on the disk is the service that just wrote
+     * it, never a request payload.
+     */
+    public function updateAvatarPath(User $user, ?string $path): User;
+
+    /**
      * Switch the account off, stamping when it happened. Idempotent: an account
      * that is already off keeps the timestamp it already has.
      */
