@@ -1,0 +1,75 @@
+// Reads every container's stdout off the Docker socket and ships it to Loki.
+//
+// The application knows nothing about this file. What makes it work is that
+// compose already labels every container with its project and service name, so
+// the labels below need no cooperation from compose.yaml.
+
+logging {
+  level  = "warn"
+  format = "logfmt"
+}
+
+discovery.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "5s"
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  // The compose service name -- php, horizon, scheduler, nginx, postgres.
+  // This is the label you filter on, and there are only a handful of values,
+  // which is exactly what a Loki label should look like.
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+
+  // Which compose project the container belongs to, so the observability
+  // stack's own logs stay distinguishable from the application's.
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "project"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+}
+
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.containers.output
+  labels     = { env = "local" }
+  forward_to = [loki.process.application.receiver]
+}
+
+loki.process "application" {
+  // Only the PHP containers speak JSON. nginx and postgres write their own
+  // formats, and running the json stage over them would just fail per line.
+  stage.match {
+    selector = "{service=~\"php|horizon|scheduler\"}"
+
+    // level is worth promoting to a label: a handful of values, and "show me
+    // the errors" is the first thing anybody asks. Everything else --
+    // request_id, user_id, route -- stays inside the line, where high
+    // cardinality costs nothing.
+    stage.json {
+      expressions = { level = "level_name" }
+    }
+
+    stage.labels {
+      values = { level = "" }
+    }
+  }
+
+  forward_to = [loki.write.default.receiver]
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

@@ -1,0 +1,13 @@
+apiVersion: 1
+
+providers:
+  - name: Laravel
+    folder: Laravel
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      # Read-only mount: the dashboard is a file in the repository, so a change
+      # is reviewed like any other change instead of living in somebody's
+      # browser.
+      path: /var/lib/grafana/dashboards

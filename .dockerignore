@@ -1,0 +1,17 @@
+# The application code is bind mounted at runtime, so the build context only
+# needs docker/. Keeping it small makes `make build` near-instant.
+.git
+.idea
+.vscode
+vendor
+storage/logs/*
+storage/framework/cache/*
+storage/framework/sessions/*
+storage/framework/views/*
+.env
+.env.*
+!.env.example
+.phpunit.cache
+.phpunit.result.cache
+*.sqlite
+*.sqlite-journal

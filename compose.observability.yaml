@@ -1,0 +1,113 @@
+# Local observability: Loki (log storage), Alloy (log shipper), Grafana (the UI).
+#
+# Its own compose project on purpose, not part of compose.yaml:
+#
+#   - `make up` stays fast. This stack costs a gigabyte or so of RAM and adds
+#     nothing to writing code.
+#   - Observability is shared. The day a second service exists it cannot live
+#     inside one of them, and this file moves out to its own repository with no
+#     change to the application.
+#   - Production does not deploy Grafana as part of the app, so neither does dev.
+#
+# The only coupling to the application is the Docker socket: Alloy reads every
+# container's stdout and takes the compose service name as a label. Nothing in
+# compose.yaml knows this file exists.
+#
+#   make observe        start it
+#   make observe-down   stop it
+#
+# DEV ONLY. Grafana is wide open here -- see the note on its service below.
+name: ${COMPOSE_PROJECT_NAME:-laravel-back-ai-setup}-observability
+
+services:
+  # ---------------------------------------------------------------------------
+  # Log storage and search. Not published to the host: only Grafana and Alloy
+  # talk to it, both from inside this network.
+  # ---------------------------------------------------------------------------
+  loki:
+    image: grafana/loki:3.5
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    volumes:
+      - loki-data:/loki
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:3100/ready | grep -q ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    networks:
+      - observability
+
+  # ---------------------------------------------------------------------------
+  # The shipper. Reads container stdout straight off the Docker socket, so no
+  # application container needs a logging driver, a sidecar or a mounted file --
+  # and horizon, scheduler and nginx are picked up for free.
+  #
+  # This replaces Promtail, which Grafana deprecated and took to end of life in
+  # March 2026. Anything you read about Promtail applies here in spirit only.
+  # ---------------------------------------------------------------------------
+  alloy:
+    image: grafana/alloy:v1.11.0
+    restart: unless-stopped
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    volumes:
+      - ./docker/observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      # Read-only: the socket is root-equivalent access to the host.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy-data:/var/lib/alloy/data
+    ports:
+      - "${ALLOY_PORT:-12345}:12345"
+    depends_on:
+      loki:
+        condition: service_healthy
+    networks:
+      - observability
+
+  # ---------------------------------------------------------------------------
+  # The UI, with the Loki datasource and the dashboard already provisioned.
+  #
+  # Anonymous admin access and no login form: this is a local development tool
+  # and a password prompt on every restart is friction for nothing. It also
+  # means anyone who can reach this port can read every log line, emails and IP
+  # addresses included -- which is why it is bound to localhost and why the
+  # production stack will not look like this.
+  # ---------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:12.1.0
+    restart: unless-stopped
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_USERS_DEFAULT_THEME: dark
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_LOG_LEVEL: warn
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - ./docker/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      loki:
+        condition: service_healthy
+    networks:
+      - observability
+
+volumes:
+  loki-data:
+    driver: local
+  grafana-data:
+    driver: local
+  alloy-data:
+    driver: local
+
+networks:
+  observability:
+    driver: bridge

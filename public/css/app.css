@@ -1,0 +1,114 @@
+/*
+ * Hand-written, served straight from public/. There is no build step and no
+ * Node toolchain in this project -- the real frontend lives elsewhere, this is
+ * only the operations overview.
+ */
+
+:root {
+    --bg: #f6f7f9;
+    --surface: #ffffff;
+    --border: #e3e6ea;
+    --text: #16191d;
+    --muted: #6b7280;
+    --accent: #ef4444;
+    --shadow: 0 1px 2px rgba(16, 19, 23, .06), 0 4px 12px rgba(16, 19, 23, .04);
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #0e1013;
+        --surface: #16191d;
+        --border: #262b31;
+        --text: #e8eaed;
+        --muted: #9aa1ab;
+        --shadow: none;
+    }
+}
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    padding: 3rem 1.5rem;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 46rem; margin: 0 auto; }
+
+header { margin-bottom: 2.5rem; }
+
+h1 {
+    margin: 0 0 .35rem;
+    font-size: 1.5rem;
+    font-weight: 600;
+    letter-spacing: -.01em;
+}
+
+.env {
+    display: inline-block;
+    margin-left: .5rem;
+    padding: .1rem .5rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: .7rem;
+    font-weight: 500;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    vertical-align: middle;
+}
+
+.lede { margin: 0; color: var(--muted); font-size: .95rem; }
+
+.cards { display: grid; gap: .75rem; }
+
+.card {
+    display: block;
+    padding: 1.15rem 1.35rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: .7rem;
+    box-shadow: var(--shadow);
+    color: inherit;
+    text-decoration: none;
+    transition: border-color .15s ease, transform .15s ease;
+}
+
+a.card:hover {
+    border-color: var(--accent);
+    transform: translateY(-1px);
+}
+
+.card h2 {
+    margin: 0 0 .2rem;
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.card p { margin: 0; color: var(--muted); font-size: .875rem; }
+
+.card--disabled { opacity: .55; }
+
+.tag {
+    margin-left: .45rem;
+    font-size: .7rem;
+    font-weight: 500;
+    color: var(--muted);
+}
+
+footer {
+    margin-top: 2.5rem;
+    color: var(--muted);
+    font-size: .8rem;
+}
+
+footer code {
+    padding: .1rem .35rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: .3rem;
+    font-size: .95em;
+}
