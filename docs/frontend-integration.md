@@ -106,6 +106,13 @@ VITE_API_URL=http://localhost:8000/api
 Nikad ne hardkoduj `localhost:8000` u kodu — backend na produkciji nije na istom
 hostu kao frontend.
 
+**Backend pušta samo jedan origin.** CORS lista se izvodi iz `FRONTEND_URL` u
+backend `.env`-u, trenutno `http://localhost:5173` (Vite default). Ako digneš
+SPA na drugom portu, browser će blokirati svaki poziv sa greškom o CORS-u —
+uskladi port ili promeni `FRONTEND_URL` na backendu. Za drugi origin pored tog
+jednog (staging, preview build) postoji `CORS_ALLOWED_ORIGINS`, lista razdvojena
+zarezima.
+
 ---
 
 ## 3. API klijent
@@ -120,7 +127,7 @@ export type ApiError = {
   status: number
   message: string                      // spreman za prikaz korisniku
   errors?: Record<string, string[]>    // samo kod 422
-  requestId?: string                   // za prijavu problema
+  requestId: string                    // za prijavu problema; uvek postoji
 }
 
 let token: string | null = localStorage.getItem('token')
@@ -134,6 +141,13 @@ export function getToken() {
   return token
 }
 
+// Id ovog zahteva pravi klijent, pre slanja -- ne cita se iz odgovora.
+// Zasto, vidi „Ko pravi X-Request-Id" na kraju ove sekcije.
+// crypto.randomUUID() trazi bezbedan kontekst: localhost i https ga imaju.
+function newRequestId(): string {
+  return crypto.randomUUID()
+}
+
 export async function api<T>(
   path: string,
   options: { method?: string; body?: unknown } = {},
@@ -142,20 +156,33 @@ export async function api<T>(
   // se tada NE postavlja rucno -- browser sam dodaje multipart granicu.
   const isForm = options.body instanceof FormData
 
-  const response = await fetch(`${BASE}${path}`, {
-    method: options.method ?? 'GET',
-    headers: {
-      // Bez ovoga Laravel ume da odgovori HTML-om umesto JSON-om.
-      Accept: 'application/json',
-      ...(options.body && !isForm ? { 'Content-Type': 'application/json' } : {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: isForm ? (options.body as FormData) : options.body ? JSON.stringify(options.body) : undefined,
-  })
+  // Napravljen pre poziva, pa postoji i ako odgovor nikad ne stigne.
+  const requestId = newRequestId()
 
-  // Svaki odgovor nosi ovaj header. Sačuvaj ga uz grešku: sa njim se u logovima
-  // nalazi tačno šta se desilo, uključujući i job koji je zahtev pokrenuo.
-  const requestId = response.headers.get('X-Request-Id') ?? undefined
+  let response: Response
+
+  try {
+    response = await fetch(`${BASE}${path}`, {
+      method: options.method ?? 'GET',
+      headers: {
+        // Bez ovoga Laravel ume da odgovori HTML-om umesto JSON-om.
+        Accept: 'application/json',
+        'X-Request-Id': requestId,
+        ...(options.body && !isForm ? { 'Content-Type': 'application/json' } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: isForm ? (options.body as FormData) : options.body ? JSON.stringify(options.body) : undefined,
+    })
+  } catch {
+    // Odgovor nije stigao: prekinuta mreža, timeout, proxy koji je pao. Baš
+    // zbog ovog slučaja id pravi klijent -- header ovde ne postoji, a upravo
+    // ovakvu grešku najviše treba naći u backend logovima.
+    throw {
+      status: 0,
+      message: 'Server trenutno nije dostupan. Pokušajte ponovo.',
+      requestId,
+    } satisfies ApiError
+  }
 
   if (response.status === 204) return null as T
 
@@ -199,6 +226,35 @@ export type Paginated<T> = {
   }
 }
 ```
+
+### Ko pravi `X-Request-Id`
+
+Backend prihvata `X-Request-Id` ako ga pošalješ (bilo kakav neprazan string do
+128 karaktera) i koristi tvoju vrednost; ako ga nema, sam generiše ULID. U oba
+slučaja vraća je u header-u odgovora. Znači — **ne moraš** da ga šalješ, ali
+treba, iz dva razloga:
+
+- **Kad odgovor ne stigne, nema šta da se pročita.** Timeout, prekinuta mreža i
+  502 na proxy-ju su tačno one greške zbog kojih se gleda log, a tada header
+  odgovora ne postoji. Id napravljen pre slanja postoji uvek.
+- **Jedan id po pozivu, bez obzira gde se čita.** Backend izlaže header kroz
+  `Access-Control-Expose-Headers`, pa ga `response.headers.get('X-Request-Id')`
+  vidi i sa druge adrese — koristi to za pozive koji ne idu kroz `api()`. Kad si
+  ga poslao, vraćena vrednost je ista ta, pa nemaš šta da usklađuješ.
+
+Ako ponavljaš neuspeo poziv, pošalji **isti** id: oba pokušaja se u logovima
+vide kao jedan događaj.
+
+Zakači ga i uz prijavu greške, da se iz frontend greške stigne do backend loga
+jednim korakom:
+
+```ts
+Sentry.captureException(error, { tags: { request_id: error.requestId } })
+```
+
+Vrednost se na backendu uzima kakva stigne i nigde se ne koristi kao ključ —
+služi samo za grupisanje linija u logu. Zato: jedan id po pozivu (ne jedan za
+celu sesiju) i ništa lično u njemu.
 
 ---
 
@@ -404,6 +460,7 @@ promenila, ili `null` kad događaj nema šta da uporedi.
 | **422** | validacija, ili neispravan/istekao link iz mejla | ispiši `errors` ispod polja |
 | **429** | previše pokušaja (login 10/min, forgot-password 5/min po IP-u) | prikaži „pokušajte za koji trenutak"; odgovor nosi `Retry-After: 60` i `X-RateLimit-Remaining` |
 | **500** | greška na serveru | generička poruka + `X-Request-Id` |
+| **0** | odgovor nije stigao (mreža, timeout, proxy) | „server nije dostupan"; `requestId` i dalje postoji, prijavi ga |
 
 Pogrešna lozinka je **401, ne 422** — to je namerno: 422 znači „polje je
 neispravno", 401 znači „podaci nisu tačni". Poruka nikad ne kaže da li je
@@ -420,6 +477,8 @@ pogrešio email ili lozinku; ne pokušavaj da to razlučiš i ne pogađaj u UI-j
   su pisane za krajnjeg korisnika i na srpskom.
 - ❌ Ne pretpostavljaj da `forgot-password` odgovor išta govori o postojanju naloga.
 - ❌ Ne šalji lozinku pri kreiranju korisnika; taj endpoint je ne prima.
+- ❌ Ne oslanjaj se samo na `X-Request-Id` iz odgovora; kod timeout-a odgovora
+  nema. Napravi id na klijentu i pošalji ga.
 - ❌ Ne šalji profilnu sliku kao base64 u JSON-u i ne postavljaj `Content-Type`
   ručno kod `FormData`; endpoint prima `multipart/form-data`.
 
@@ -448,7 +507,8 @@ curl -s -X POST http://localhost:8000/api/auth/login \
   -d '{"email":"uros.minic@fifthguild.com","password":"password"}'
 ```
 
-**Zatim iskoristi `X-Request-Id`.** Svaki odgovor ga nosi. Sa tom vrednošću
+**Zatim iskoristi `X-Request-Id`.** Klijent ga pravi i šalje uz svaki poziv
+(sekcija 3), pa ga imaš i onda kad odgovor nikad nije stigao. Sa tom vrednošću
 backend tim (ili ti, u backend folderu) vidi tačno šta se desilo:
 
 ```bash
