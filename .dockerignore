@@ -1,17 +1,48 @@
-# The application code is bind mounted at runtime, so the build context only
-# needs docker/. Keeping it small makes `make build` near-instant.
+# The development image bind mounts the code, but the production build copies it
+# in -- so this list is what does and does not end up inside a deployed image.
+#
+# Keep it accurate for two reasons: anything left in is shipped to the server,
+# and anything that changes often invalidates the COPY layer on every build.
+
 .git
+.gitattributes
+.github
 .idea
 .vscode
+.zed
+.ai
+.claude
+.mcp.json
+boost.json
+
+# Rebuilt inside the image by the `vendor` stage, against the lock file.
 vendor
+
+# Secrets. .env.production is read by compose on the host and handed to the
+# containers as environment; it must never be baked into a layer.
+.env
+.env.*
+!.env.example
+
+# Recreated by the Dockerfile, and a host copy would arrive owned by the wrong
+# user with the wrong contents.
+public/storage
 storage/logs/*
 storage/framework/cache/*
 storage/framework/sessions/*
 storage/framework/views/*
-.env
-.env.*
-!.env.example
+bootstrap/cache/*
+
+# Nothing here runs on a server.
+tests
+phpunit.xml
 .phpunit.cache
 .phpunit.result.cache
+compose*.yaml
+deploy.sh
+Makefile
+docs
 *.sqlite
 *.sqlite-journal
+backups
+.deploy

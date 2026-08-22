@@ -242,6 +242,22 @@ class RequestLoggingTest extends TestCase
     }
 
     /**
+     * A cross-origin response hides every header the CORS layer does not name,
+     * so without `exposed_headers` the SPA reads null here while curl sees the
+     * value -- and the id it is told to quote in a bug report is unreachable.
+     */
+    public function test_the_id_can_be_read_from_the_frontend_origin(): void
+    {
+        $response = $this->withHeader('Origin', 'http://localhost:5173')
+            ->getJson(route('users.index'));
+
+        $this->assertStringContainsString(
+            'X-Request-Id',
+            (string) $response->headers->get('Access-Control-Expose-Headers'),
+        );
+    }
+
+    /**
      * The reason the id goes into Context and not just into the line: everything
      * else logged during the request can be tied back to it, queued jobs
      * included.

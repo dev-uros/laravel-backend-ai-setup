@@ -55,11 +55,11 @@ restart: ## Restart every container
 	$(DC) restart
 
 .PHONY: build
-build: ## Rebuild the php image
+build: ## Rebuild the php image (dev stage of docker/Dockerfile)
 	$(DC) build
 
 .PHONY: rebuild
-rebuild: ## Rebuild the php image from scratch, ignoring cache
+rebuild: ## Rebuild the php image (dev stage of docker/Dockerfile) from scratch, ignoring cache
 	$(DC) build --no-cache
 
 .PHONY: ps
@@ -201,6 +201,72 @@ wait-for:
 		printf "."; sleep 1; \
 	done; \
 	echo " timed out after 60s"; $(DC) logs --tail=30 $(s); exit 1
+
+# -----------------------------------------------------------------------------
+# Production
+#
+# These run on the server, against .env.production and compose.prod.yaml. They
+# never touch the development containers or their volumes -- the prod project
+# has its own name, so `make down` and `make prod-down` cannot reach each other.
+#
+# Traefik and the log stack are NOT here. They are shared by every service on
+# the server, live in their own repository, and are deployed once per machine
+# (`cd /opt/infra && make up`). This stack only attaches to the `edge` network
+# they create.
+#
+# The only one you normally need is `make deploy`.
+# -----------------------------------------------------------------------------
+
+ENV_PROD    := .env.production
+DC_PROD     := $(DC) -f compose.prod.yaml --env-file $(ENV_PROD)
+
+.PHONY: deploy
+deploy: ## PROD: build, back up, migrate and roll the whole stack forward
+	./deploy.sh
+
+.PHONY: rollback
+rollback: ## PROD: put the previous images back (does NOT revert migrations)
+	./docker/scripts/rollback.sh
+
+.PHONY: backup
+backup: ## PROD: dump the database to ./backups and prune old dumps
+	@./docker/scripts/backup.sh
+
+.PHONY: prod-key
+prod-key: ## PROD: print a fresh APP_KEY to paste into .env.production
+	@printf 'base64:%s\n' "$$(openssl rand -base64 32)"
+
+.PHONY: prod-ps
+prod-ps: ## PROD: show container status
+	$(DC_PROD) ps
+
+.PHONY: prod-logs
+prod-logs: ## PROD: tail logs (one service: make prod-logs s=horizon)
+	$(DC_PROD) logs -f --tail=100 $(s)
+
+.PHONY: prod-shell
+prod-shell: ## PROD: open a shell in the php container
+	$(DC_PROD) exec php sh
+
+.PHONY: prod-artisan
+prod-artisan: ## PROD: run an artisan command, e.g. make prod-artisan c="horizon:status"
+	$(DC_PROD) exec -T php php artisan $(c)
+
+.PHONY: prod-psql
+prod-psql: ## PROD: open a psql shell (the port is not published, this is the way in)
+	$(DC_PROD) exec postgres psql -U $$(sed -n 's/^DB_USERNAME=//p' $(ENV_PROD) | tail -n1) -d $$(sed -n 's/^DB_DATABASE=//p' $(ENV_PROD) | tail -n1)
+
+.PHONY: prod-restart
+prod-restart: ## PROD: restart the app containers (keeps the env they were created with)
+	$(DC_PROD) restart php horizon scheduler nginx
+
+.PHONY: prod-reload
+prod-reload: ## PROD: recreate the app containers so a changed .env.production takes effect
+	$(DC_PROD) up -d
+
+.PHONY: prod-down
+prod-down: ## PROD: stop the application stack (volumes and the edge proxy are kept)
+	$(DC_PROD) down --remove-orphans
 
 .PHONY: help
 help: ## Show this help

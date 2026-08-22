@@ -17,6 +17,12 @@
 Seven services, defined in `compose.yaml`: `nginx` -> `php` (php-fpm), plus
 `horizon`, `scheduler`, `postgres`, `postgres-test` and `redis`.
 
+They build the `dev` target of `docker/Dockerfile`, which also holds the
+production stages. One file on purpose: the PHP version and the extension list
+are the two things dev and prod must never disagree on, and a second Dockerfile
+is how an extension gets added in one place and forgotten in the other. See
+**Deploying to production** below.
+
 **Never run `php`, `composer`, `artisan` or `phpunit` on the host.**
 `DB_HOST=postgres` and `REDIS_HOST=redis` only resolve inside the Compose
 network, so host-side commands that touch the database, cache or queue will
@@ -484,7 +490,7 @@ off a phone arrives as several megabytes and lands as a few dozen kilobytes;
 without that, every row of the users list would pay for pixels nothing renders.
 The GD driver is bound to `ImageManager` in `AppServiceProvider` — Intervention
 cannot be autowired, it needs a driver — and `gd` + `exif` are installed in
-`docker/php/Dockerfile` for it.
+`docker/Dockerfile` for it.
 
 **This is the one endpoint a plain user may write to, and only for themselves.**
 `UserPolicy::changeAvatar` returns true for anyone signed in, because the policy
@@ -931,6 +937,170 @@ suite and `/api/users/1` becomes a 404 somewhere in the middle of a run.
 `migrate:fresh` in a test can never reach dev data. Its storage is tmpfs, so
 restarting the container wipes it and the next run rebuilds the schema — that is
 expected, not a failure.
+
+## Deploying to production
+
+One command on the server, after `git pull`:
+
+```
+./deploy.sh          # or: make deploy
+```
+
+Images are built **on the server** — there is no registry and nothing to push.
+
+The from-zero runbook covering all three repositories in order — laptop-side
+prep, server preparation, DNS, infra, this API, the frontend, backups, and how a
+fourth service is added — lives in the **infra repository**, at
+`docs/server-setup.md`. It is there rather than here because it describes the
+whole machine, not this application.
+
+`docs/deployment.md` is the deeper reference for this repository's half. The
+SPA's own repository documents its deploy; what this side owes it is
+`docs/frontend-integration.md`, the API contract. Like `docs/frontend-integration.md` it is part of the contract,
+not a leftover note — a change to the deploy flow means editing it in the same
+commit.
+
+### What this repository owns, and what it does not
+
+`compose.prod.yaml` holds nginx, php, horizon, scheduler, postgres and redis:
+the application and everything **only** the application uses. Its Postgres is
+versioned with the migrations that shape it, which is exactly why it belongs
+here.
+
+**Traefik and the log stack are not here.** They route and observe every service
+on the server, the frontend included, so they live in their own repository and
+are deployed once per machine. `deploy.sh` only *checks* that the `edge` network
+exists and fails with instructions if it does not — a `git pull` in this
+repository must not be able to change routing for something it is not
+responsible for.
+
+The dividing line is not "infrastructure versus application". It is: shared by
+more than one application, or used by exactly one. See `docs/deployment.md`.
+
+**`compose.prod.yaml` is standalone, not an override of `compose.yaml`.**
+`-f compose.yaml -f compose.prod.yaml` would merge them, and compose merges
+sequences by appending: the development bind mount `.:/var/www/html` would
+survive into production and shadow the code baked into the image. Nothing would
+fail — you would simply be running whatever sits on the server's disk.
+
+### Two nginxes, and only one of them is here
+
+The `web` image is the **application's** nginx: it serves `public/` and speaks
+FastCGI to php-fpm, and `public/` is copied into it from the `app` stage. That
+is what makes it work without a bind mount.
+
+Traefik is the **edge**: TLS, domains, routing between services. It does not
+serve files at all, which is why the application still needs its own nginx and
+why the frontend will need one too.
+
+`fastcgi_pass` in `docker/nginx/prod.conf` goes through a variable and a
+`resolver`, deliberately. With a literal `fastcgi_pass php:9000` nginx resolves
+the name once at startup and **refuses to start** if php is not up yet — one
+crashed container then keeps the web server down with it and a restart loop
+never recovers. As a variable the name is resolved per request.
+
+### The image
+
+`docker/Dockerfile`, five stages: `base` (runtime + extensions, shared with
+dev), `dev`, `vendor` (`composer install --no-dev`), `app`, `web`.
+
+`route:cache`, `view:cache` and `event:cache` run at **build** time — nothing in
+them depends on the environment. `config:cache` runs at **container start**, in
+`docker/php/entrypoint.sh`, because its values come from the server's
+environment: caching it at build would bake production credentials into the
+image and make every later edit to `.env.production` do nothing.
+
+The entrypoint drops from root to `www-data` for every command **except
+`php-fpm`**, whose master must stay root — the base image points `error_log` at
+`/proc/self/fd/2` and only root can reopen the container's stderr. Its workers
+drop through `user =` in `docker/php/www.prod.conf`. Dropping first looks tidier
+and makes fpm exit 78 on every start.
+
+`php`, `horizon` and `scheduler` are the same image with different commands,
+exactly as in development.
+
+### What deploy.sh guarantees
+
+- **Preflight refuses to start** on an incomplete environment: missing
+  `APP_KEY`, `APP_ENV` that is not `production`, a short database or Redis
+  password, and above all `APP_DEBUG=true` — which serves a stack trace listing
+  every environment variable to whoever triggers an error.
+- **The database is dumped before migrations run**, never after
+  (`docker/scripts/backup.sh`). A failed dump aborts the deploy.
+- **Maintenance mode is held in Redis** (`APP_MAINTENANCE_DRIVER=cache`), so one
+  container switching it on takes all four out of service. A file-based flag
+  lives inside one container's filesystem and would leave the other three
+  serving traffic. The exit trap lifts it whatever else went wrong.
+- **Health is proven, not assumed**: it polls `/up` through nginx and does not
+  report success until it answers.
+- **The previous images are kept as `:previous`** — `make rollback` puts them
+  back. It does not revert migrations; that is what the dump is for.
+
+### The first administrator
+
+`admin:create` is the only way to create the account that has to exist before
+anybody can call `POST /api/users`:
+
+```
+make prod-artisan c="admin:create ops@example.com --name=Uroš --surname=Minić"
+```
+
+**`DatabaseSeeder` cannot do this in production.** `UserSeeder` goes through
+`User::factory()`, factories need Faker, and Faker is a require-dev package that
+`composer install --no-dev` leaves out of the image. Even if it were there it
+would create an account whose password is the word `password`.
+
+The command goes through `StoreUserService` like every other creation, so the
+account gets the random password, the emailed activation link and both audit
+trail entries, with `ActorData::system()` as the actor. `--show-link` prints the
+activation URL for a server whose SMTP is not working yet — and says out loud
+that doing so invalidates the link that was just emailed, because minting a
+token deletes the previous one.
+
+### Secrets and state
+
+`.env.production` is gitignored and dockerignored. It is read twice — by compose
+for `${API_DOMAIN}` interpolation, and by the containers as their environment —
+and never enters an image. **No `${VAR}` references inside it**: compose passes
+those lines through verbatim, so `APP_URL=https://${API_DOMAIN}` arrives at PHP
+as that literal string.
+
+Avatars live in the `storage-public` named volume, mounted into php read-write
+and into nginx read-only. It is the only application state outside Postgres and
+the one thing a redeploy would otherwise destroy — back it up with the database.
+
+Not one service in `compose.prod.yaml` publishes a port. Postgres and Redis are
+reachable only from the internal network (`make prod-psql` goes through
+`docker exec`). The network is deliberately **not** `internal: true`: the
+application needs outbound access for SMTP and for the haveibeenpwned lookup
+that `uncompromised()` performs on every password rule.
+
+### Behind a proxy
+
+`bootstrap/app.php` trusts the forwarded headers (`trustProxies(at: '*')`).
+Without it `$request->ip()` is Traefik's container address, and that is the
+value `user_logs`, `login_attempts` and the request log all record — every row
+would say the same thing about a different person, and nothing would fail.
+`TrustedProxyTest` covers it.
+
+`at: '*'` rather than a fixed CIDR because the proxy's address is handed out by
+Docker and changes when the network is recreated. It is safe **only** because
+nothing publishes a port: the sole route to PHP is through the proxy.
+
+### Horizon, Pulse and Grafana
+
+All three read production data — queued job payloads with email addresses, slow
+queries with their bindings, every request line. All three are locked:
+
+- `viewHorizon` and `viewPulse` are defined against `UserRole::Admin`
+  (`HorizonServiceProvider`, `AppServiceProvider`). The defaults they replace
+  were "an empty list of emails" and "local environment only", which is shut
+  rather than protected. Covered by `OperationalDashboardsTest`.
+- Grafana has a real password, no anonymous access and no sign-up, and reaches
+  the internet only through Traefik on its own subdomain.
+
+Loki deletes lines after `LOKI_RETENTION_PERIOD` (30 days by default). The dev
+observability stack has none of this — see the notes in each file.
 
 ## Configuration facts worth knowing
 

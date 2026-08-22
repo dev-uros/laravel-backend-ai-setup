@@ -9,6 +9,7 @@ Before planning or editing, find the row whose globs match the file's path and r
 | {app/Services/Auth/**,app/Http/Controllers/AuthController.php,app/Data/Auth/**} | .ai/rules/auth.md |
 | app/Http/Controllers/** | .ai/rules/controllers.md |
 | {app/Services/**,app/Data/**} | .ai/rules/data.md |
+| {docker/**,compose*.yaml,deploy.sh} | .ai/rules/docker.md |
 | {app/Policies/**,app/Enums/**,routes/api.php} | .ai/rules/enums.md |
 | app/Exceptions/** | .ai/rules/exceptions.md |
 | {compose.yaml,docker/**}, {Makefile,compose.yaml,.env.example}, {phpunit.xml,tests/**}, {compose.yaml,routes/console.php,Makefile} | .ai/rules/general.md |

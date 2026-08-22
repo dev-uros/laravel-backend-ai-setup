@@ -51,14 +51,24 @@ class AccountCreatedNotification extends Notification implements ShouldQueue
      * A different path from the forgotten-password email on purpose: both carry
      * a reset token, but only this one also verifies the address, so the SPA
      * has to be able to tell them apart.
+     *
+     * Public and static because `admin:create --show-link` prints this same URL
+     * for the first administrator on a server where SMTP is not working yet.
+     * One builder, so the printed link and the emailed one can never point at
+     * different paths.
      */
-    private function activationUrl(User $notifiable): string
+    public static function activationUrlFor(User $user, string $token): string
     {
         return rtrim((string) config('app.frontend_url'), '/')
             .'/auth/activate-account?'
             .http_build_query([
-                'email' => $notifiable->getEmailForPasswordReset(),
-                'token' => $this->token,
+                'email' => $user->getEmailForPasswordReset(),
+                'token' => $token,
             ]);
+    }
+
+    private function activationUrl(User $notifiable): string
+    {
+        return self::activationUrlFor($notifiable, $this->token);
     }
 }

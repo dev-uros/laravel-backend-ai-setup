@@ -1,0 +1,217 @@
+# Production application stack. Deliberately NOT an override of compose.yaml.
+#
+# `-f compose.yaml -f compose.prod.yaml` would merge the two, and compose merges
+# sequences by appending -- the development bind mount `.:/var/www/html` would
+# survive into production and shadow the code baked into the image. Nothing
+# would fail; you would simply be running whatever happens to sit on the server's
+# disk. A standalone file is readable top to bottom and cannot do that.
+#
+# Deploy with ./deploy.sh (or `make deploy`), never with a bare `up -d`:
+# migrations, the database backup and the health gate live there.
+#
+#   make deploy      build, migrate and roll the stack forward
+#   make prod-ps     what is running
+#   make prod-logs   tail everything
+#   make rollback    back to the previous image
+
+name: ${COMPOSE_PROJECT_NAME:-laravel-back-ai-setup}-prod
+
+# Docker's default json-file driver grows without limit. On a single VPS that is
+# how a disk fills up three months after a deploy nobody has looked at since.
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+# php, horizon and scheduler are one image with three commands -- the same
+# arrangement as development, so a job cannot behave differently from the
+# request that queued it.
+x-app: &app
+  image: ${APP_IMAGE:-laravel-back-ai-setup/app}:current
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+    target: app
+  restart: unless-stopped
+  env_file:
+    - .env.production
+  volumes:
+    - storage-public:/var/www/html/storage/app/public
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  networks:
+    - internal
+  <<: *logging
+
+services:
+  # ---------------------------------------------------------------------------
+  # The application's own nginx. The only container on the edge network, and
+  # the only one Traefik can see.
+  # ---------------------------------------------------------------------------
+  nginx:
+    image: ${APP_IMAGE:-laravel-back-ai-setup/app}-web:current
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: web
+    restart: unless-stopped
+    volumes:
+      # Read-only: nginx serves avatars, it never writes one.
+      - storage-public:/var/www/html/storage/app/public:ro
+    depends_on:
+      php:
+        condition: service_started
+    networks:
+      - edge
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/up || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    labels:
+      traefik.enable: "true"
+      # Required whenever a container sits on more than one network: without it
+      # Traefik picks whichever address it finds first and can end up routing to
+      # the internal one, which it cannot reach.
+      traefik.docker.network: edge
+
+      traefik.http.routers.api.rule: Host(`${API_DOMAIN}`)
+      traefik.http.routers.api.entrypoints: websecure
+      traefik.http.routers.api.tls.certresolver: le
+      traefik.http.routers.api.middlewares: security-headers@file,api-ratelimit@file,compress@file
+      traefik.http.services.api.loadbalancer.server.port: "80"
+    <<: *logging
+
+  # ---------------------------------------------------------------------------
+  # php-fpm. No published port: nginx reaches it over the internal network and
+  # nothing else has any business talking to it.
+  # ---------------------------------------------------------------------------
+  php:
+    <<: *app
+    healthcheck:
+      # Confirms the worker pool is accepting connections. nginx's healthcheck
+      # covers the rest of the path, through to Laravel and back.
+      test: ["CMD-SHELL", "php -r 'exit(@fsockopen(\"127.0.0.1\", 9000) ? 0 : 1);'"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # ---------------------------------------------------------------------------
+  # Queue workers.
+  # ---------------------------------------------------------------------------
+  horizon:
+    <<: *app
+    command: ["php", "artisan", "horizon"]
+    # Horizon traps SIGTERM and finishes the job in flight before exiting.
+    stop_signal: SIGTERM
+    stop_grace_period: 60s
+    healthcheck:
+      test: ["CMD-SHELL", "php artisan horizon:status | grep -q running"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Scheduler. Runs model:prune for the two log tables (routes/console.php).
+  # ---------------------------------------------------------------------------
+  scheduler:
+    <<: *app
+    command: ["php", "artisan", "schedule:work"]
+    stop_signal: SIGTERM
+    stop_grace_period: 60s
+
+  # ---------------------------------------------------------------------------
+  # Database. PostgreSQL 18 moved its VOLUME to /var/lib/postgresql and made
+  # PGDATA version specific. Mounting the pre-18 /var/lib/postgresql/data here
+  # would still boot and would silently persist nothing.
+  #
+  # No `ports:` -- reach it with `make prod-psql`, which goes through docker
+  # exec. A published 5432 on a public IP is found by scanners within hours.
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_DATABASE}
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      PGDATA: /var/lib/postgresql/18/docker
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME} -d ${DB_DATABASE}"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    networks:
+      - internal
+    <<: *logging
+
+  # ---------------------------------------------------------------------------
+  # Cache + queue backend.
+  #
+  # noeviction, not the usual allkeys-lru: db 0 holds the queue, and an eviction
+  # policy that is free to drop keys under memory pressure is free to drop a
+  # queued job. A failed write is loud; a silently discarded job is not.
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --requirepass
+      - ${REDIS_PASSWORD}
+      - --maxmemory
+      - ${REDIS_MAXMEMORY:-512mb}
+      - --maxmemory-policy
+      - noeviction
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    networks:
+      - internal
+    <<: *logging
+
+volumes:
+  # Avatars. The one piece of application state that is not in Postgres, and the
+  # one thing a redeploy would otherwise destroy. Back it up with the database.
+  storage-public:
+    driver: local
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local
+
+networks:
+  # Created by deploy.sh (or `docker network create edge`) and shared with
+  # compose.edge.yaml and the observability stack. External so that stopping
+  # this stack cannot take the proxy's network down with it.
+  edge:
+    external: true
+    name: edge
+
+  # Everything else. Deliberately NOT `internal: true` -- the application needs
+  # outbound access for SMTP and for the haveibeenpwned lookup that
+  # `uncompromised()` performs on every password rule. What it has is no inbound
+  # route: not one service here publishes a port.
+  internal:
+    driver: bridge

@@ -26,6 +26,7 @@
         <!-- Tests run against a real Postgres (the postgres-test container) so
              they exercise the same driver as dev and production. Its storage is
              tmpfs, so the data is thrown away when the container stops. -->
+        <env name="FRONTEND_URL" value="http://localhost:5173"/>
         <env name="DB_CONNECTION" value="pgsql"/>
         <env name="DB_HOST" value="postgres-test"/>
         <env name="DB_PORT" value="5432"/>
