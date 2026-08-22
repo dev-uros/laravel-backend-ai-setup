@@ -150,17 +150,24 @@ services:
       - full_page_writes=off
       - -c
       - synchronous_commit=off
+    # Fixed values, matching phpunit.xml, and deliberately NOT derived from
+    # DB_DATABASE/DB_USERNAME like the dev server above. phpunit's <env> entries
+    # are literals -- it cannot read .env -- so those two have to agree, and
+    # phpunit.xml is the one that cannot be parameterised. Deriving these from
+    # .env instead means renaming a project (COMPOSE_PROJECT_NAME, DB_DATABASE)
+    # leaves the whole suite connecting to a database that does not exist.
+    # Nothing is lost: this server is tmpfs and its name carries no meaning.
     environment:
-      POSTGRES_DB: ${DB_DATABASE:-laravel}_testing
-      POSTGRES_USER: ${DB_USERNAME:-laravel}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-secret}
+      POSTGRES_DB: laravel_testing
+      POSTGRES_USER: laravel
+      POSTGRES_PASSWORD: secret
       PGDATA: /var/lib/postgresql/18/docker
     ports:
       - "${FORWARD_TEST_DB_PORT:-5434}:5432"
     tmpfs:
       - /var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-laravel} -d ${DB_DATABASE:-laravel}_testing"]
+      test: ["CMD-SHELL", "pg_isready -U laravel -d laravel_testing"]
       interval: 5s
       timeout: 5s
       retries: 20

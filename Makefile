@@ -25,6 +25,7 @@ DB_NAME    := $(or $(call dotenv,DB_DATABASE),laravel)
 
 # Pass-through arguments, e.g. `make artisan c="migrate --seed"`
 c ?=
+u ?= $(DB_USER)
 
 .DEFAULT_GOAL := help
 
@@ -185,17 +186,19 @@ setup: ## First-time setup: build, boot, install deps, migrate
 	@$(MAKE) --no-print-directory up
 
 .PHONY: wait-db
-wait-db: ; @$(MAKE) --no-print-directory wait-for s=postgres
+wait-db: ; @$(MAKE) --no-print-directory wait-for s=postgres u=$(DB_USER)
 
+# `laravel`, not $(DB_USER): the test server's credentials are fixed to match
+# phpunit.xml and do not follow DB_USERNAME. See the note in compose.yaml.
 .PHONY: wait-test-db
-wait-test-db: ; @$(MAKE) --no-print-directory wait-for s=postgres-test
+wait-test-db: ; @$(MAKE) --no-print-directory wait-for s=postgres-test u=laravel
 
-# Block until the postgres service named by `s` accepts connections.
+# Block until the postgres service named by `s` accepts connections as user `u`.
 .PHONY: wait-for
 wait-for:
 	@printf "waiting for $(s)"
 	@for i in $$(seq 1 60); do \
-		if $(DC) exec -T $(s) pg_isready -q -U $(DB_USER) 2>/dev/null; then \
+		if $(DC) exec -T $(s) pg_isready -q -U $(u) 2>/dev/null; then \
 			echo " ready"; exit 0; \
 		fi; \
 		printf "."; sleep 1; \
