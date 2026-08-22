@@ -5,8 +5,25 @@ frontend mora da zna.
 
 Pisano da se čita redom. Sve komande su probane protiv živog stacka.
 
+> Ako postavljaš server **od nule**, počni od `docs/server-setup.md` **u infra
+> repou** — to je jedan redosled kroz sva tri repoa (infra → backend →
+> frontend). Ovaj fajl je referenca za backend deo, detaljnija i bez frontenda.
+
 Pretpostavka je jedan VPS sa Dockerom, Traefik kao edge proxy i build **na
 serveru** — nema registry-ja, nema image-a koji se negde gura.
+
+Server drži **tri odvojena repoa**:
+
+| Repo | Šta je unutra | Koliko često se deployuje |
+| --- | --- | --- |
+| `infra` | Traefik, Loki/Alloy/Grafana | jednom po serveru, pa retko |
+| `backend` (ovaj) | Laravel + njegov Postgres, Redis, nginx | na svaku promenu |
+| `frontend` | SPA + njen nginx | na svaku promenu |
+
+Podela nije „infrastruktura vs aplikacija" nego **ko još zavisi od toga**:
+Traefik rutira za sve i Alloy čita svaki kontejner, pa su deljeni. Postgres i
+Redis koristi samo ova aplikacija, njihova šema se kotrlja zajedno sa njenim
+migracijama — i zato pripadaju ovde.
 
 ---
 
@@ -16,31 +33,34 @@ serveru** — nema registry-ja, nema image-a koji se negde gura.
                         internet :80 :443
                                │
                     ┌──────────▼──────────┐
-                    │      Traefik        │   TLS, Let's Encrypt, routing
-                    │  compose.edge.yaml  │   projekat: `edge`
+                    │      Traefik        │   repo: infra
+                    │   + Loki, Alloy,    │   dize se jednom po serveru
+                    │        Grafana      │
                     └──┬───────────┬──────┘
-        ── mreža `edge` (external, deljena) ──
+        ── mreža `edge` (deljena, pravi je infra) ──
                        │           │
         ┌──────────────▼──┐   ┌────▼─────────┐
         │ api.tvoj.rs     │   │ logs.tvoj.rs │
         │  nginx (web)    │   │   Grafana    │
-        │    ↓ :9000      │   └──────┬───────┘
-        │  php-fpm        │          │
-        │  horizon        │      Loki + Alloy
-        │  scheduler      │   compose.observability.prod.yaml
+        │    ↓ :9000      │   └──────────────┘
+        │  php-fpm        │
+        │  horizon        │      repo: backend (ovaj)
+        │  scheduler      │      compose.prod.yaml
         │  postgres       │
         │  redis          │
-        │ compose.prod.   │
-        │     yaml        │
         └─────────────────┘
      ── mreža `internal` (bez ijednog objavljenog porta) ──
 ```
 
-Tri odvojena compose projekta. Nijedan ne može da obori drugi: `make prod-down`
-ne dira Traefik, `make edge-down` ne dira bazu.
+Nijedan stack ne može da obori drugi. `make prod-down` ne dira Traefik; infra ne
+zna ništa o Laravelu.
 
-Frontend, kad ga budeš dodavao, kači se na istu `edge` mrežu sa svojim compose
-fajlom. Ništa u `compose.edge.yaml` se ne menja. Detaljno u sekciji 5.
+**Ovaj repo ne pravi `edge` mrežu i ne diže Traefik** — samo proverava da
+postoje i staje sa jasnom porukom ako ne postoje. Jedan `git pull` ovde ne sme
+da promeni rutiranje za frontend.
+
+Frontend se kači na istu mrežu sa svojim compose fajlom. Ništa se u infra repou
+ne menja. Detaljno u sekciji 5.
 
 ---
 
@@ -50,9 +70,14 @@ fajlom. Ništa u `compose.edge.yaml` se ne menja. Detaljno u sekciji 5.
 
 Minimum koji ovaj stack realno traži: **2 vCPU, 4 GB RAM, 40 GB diska**.
 
-Sa uključenom observability (Loki + Grafana + Alloy) računaj da ta tri servisa
-pojedu oko 1 GB RAM-a. Ako si na 2 GB mašini, stavi
-`ENABLE_OBSERVABILITY=false` i čitaj logove kroz `make prod-logs`.
+Izmereno na praznom stacku: aplikacija ~275 MiB, infra (Traefik + Loki + Alloy +
+Grafana) ~280 MiB. Pod stvarnim opterećenjem računaj 2-3 GB — php-fpm sme da
+digne do 12 workera, a `npm run build` frontenda ume sam da traži preko
+gigabajta.
+
+Na 2 GB mašini zakomentariši `COMPOSE_PROFILES` u infra `.env` i čitaj logove
+kroz `make prod-logs`. Swap napravi u svakom slučaju (vidi `server-setup.md` u infra
+repou, korak 1.4) — bez njega build pukne sa `Killed`.
 
 ### Docker
 
@@ -103,6 +128,26 @@ firewall je druga brava i košta te jedan minut.
 
 ## 2. Prvo postavljanje
 
+### 2.0 Infra, jednom po serveru
+
+Pre bilo koje aplikacije:
+
+```bash
+git clone <infra-repo> /opt/infra
+cd /opt/infra
+cp .env.example .env
+nano .env                 # ACME_EMAIL, GRAFANA_DOMAIN, GRAFANA_ADMIN_PASSWORD
+make up
+```
+
+Time nastaje `edge` mreža i diže se Traefik. Provera:
+
+```bash
+docker network inspect edge >/dev/null && echo ok
+```
+
+Detalji su u README-u tog repoa. Ovaj korak se više ne ponavlja.
+
 ### 2.1 Klon
 
 ```bash
@@ -127,15 +172,15 @@ Popuni ovo, ostalo ima razuman default:
 | Ključ | Šta ide |
 | --- | --- |
 | `API_DOMAIN` | `api.tvoj-domen.rs` |
-| `GRAFANA_DOMAIN` | `logs.tvoj-domen.rs` |
-| `ACME_EMAIL` | tvoj email, tu stižu upozorenja o isteku sertifikata |
 | `APP_KEY` | iz `make prod-key` |
 | `APP_URL` | `https://api.tvoj-domen.rs` |
 | `FRONTEND_URL` | `https://app.tvoj-domen.rs` |
 | `DB_PASSWORD` | `openssl rand -base64 32` |
 | `REDIS_PASSWORD` | `openssl rand -base64 32` |
-| `GRAFANA_ADMIN_PASSWORD` | nešto dugačko |
 | `MAIL_*` | podaci tvog SMTP provajdera |
+
+`ACME_EMAIL`, `GRAFANA_DOMAIN` i retencija logova ovde **ne postoje** — to su
+odluke infra repoa, ne ove aplikacije.
 
 Tri stvari koje ljudi ovde zezaju:
 
@@ -204,8 +249,8 @@ Pa u browseru:
 - `https://api.tvoj-domen.rs/horizon` → 403 dok se ne uloguješ kao admin
 - `https://api.tvoj-domen.rs/docs/api` → Scramble dokumentacija
 
-Sertifikati: `make edge-logs` i traži `certificate obtained`. Prvi put ume da
-potraje 30-60 sekundi.
+Sertifikati: `cd /opt/infra && make logs s=traefik`, traži `certificate
+obtained`. Prvi put ume da potraje 30-60 sekundi.
 
 ### 2.6 Backup u cron
 
@@ -261,7 +306,7 @@ ne pretvara se da jeste.
 | --- | --- |
 | samo `.env.production` | `make prod-reload` |
 | samo `docker/traefik/dynamic.yml` | ništa, Traefik gleda taj fajl i primenjuje u letu |
-| flagove u `compose.edge.yaml` | `make edge-up` (čitaju se samo pri startu) |
+| bilo šta u `/opt/infra` | tamo `make up` — ne tiče se ovog repoa |
 | **bilo koji PHP kod, `routes/`, `config/`** | pun `./deploy.sh` |
 
 Dva reda koja zavaravaju:
@@ -320,8 +365,10 @@ make prod-ps                      # ko je gore, ko je unhealthy
 make prod-logs                    # sve
 make prod-logs s=php              # jedan servis
 make prod-logs s=horizon
-make edge-logs                    # ruta vraća 404? ovde
 make prod-artisan c="horizon:status"
+
+cd /opt/infra && make routes     # ko je izlozen i na kom domenu
+cd /opt/infra && make logs s=traefik
 ```
 
 Ili u Grafani, `https://logs.tvoj-domen.rs`:
@@ -339,7 +386,7 @@ kontejneru.
 
 | Simptom | Uzrok |
 | --- | --- |
-| 404 na domenu | Traefik labela ima tipfeler — labele ne prijavljuju grešku, `make edge-logs` |
+| 404 na domenu | Traefik labela ima tipfeler — labele ne prijavljuju grešku, `cd /opt/infra && make routes` |
 | Sertifikat nevažeći | DNS ne pokazuje na server, ili si potrošio ACME limit |
 | 502 | php kontejner pada, `make prod-logs s=php` |
 | Email ne stiže | `MAIL_MAILER=log` u `.env.production`, ili SMTP odbija |
@@ -468,8 +515,8 @@ cd /opt/web
 docker compose up -d --build
 ```
 
-Traefik ga pokupi sam. **U `compose.edge.yaml` se ne menja ništa** — to je cela
-poenta label-driven pristupa.
+Traefik ga pokupi sam. **U infra repou se ne menja ništa** — to je cela poenta
+label-driven pristupa.
 
 Dve zamke:
 
@@ -511,7 +558,7 @@ API ugovora; ako se menja oblik odgovora, menja se i taj fajl u istom commitu.
 
 Isti recept kao frontend u Dockeru:
 
-1. svoj folder, svoj `compose.yaml`
+1. svoj repo, svoj `compose.yaml`
 2. `networks: [edge]` sa `external: true`
 3. Traefik labele sa svojim `Host(...)`
 4. DNS zapis
@@ -537,8 +584,10 @@ Ništa centralno se ne dira. Ako servisu treba baza, dodaje svoj Postgres na svo
 | `make prod-reload` | recreate aplikacije, pokupi izmenjen `.env.production` |
 | `make prod-restart` | restart procesa, zadržava postojeći environment |
 | `make prod-key` | novi APP_KEY |
-| `make edge-up` / `edge-down` / `edge-logs` | Traefik |
-| `make observe-prod` / `observe-prod-down` | Loki + Grafana |
+
+
+Traefik i log stack su u `/opt/infra`, sa svojim `make up` / `down` / `logs` /
+`routes`.
 
 ---
 
