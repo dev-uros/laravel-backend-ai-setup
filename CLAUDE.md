@@ -31,6 +31,20 @@ Longer prose lives in `docs/`: `frontend-integration.md` (the SPA contract) and
 change to a response shape or to the deploy flow is edited there in the same
 commit.
 
+## Two agents read this file
+
+`AGENTS.md` is a symlink to this file and `.agents/skills` a symlink to
+`.claude/skills`, so Claude Code and Codex load the same guidelines and the same
+four Boost skills. Edit `CLAUDE.md` and `.claude/skills/` only. `boost.json`
+lists both agents, so `make artisan c="boost:install"` regenerates through the
+symlinks instead of forking them into two copies that drift.
+
+MCP config is the one thing not shared: Claude Code reads `.mcp.json`, Codex
+`.codex/config.toml`, which is gitignored — each machine writes it once with
+`make artisan c="boost:install --mcp"`. Codex also has no `record-rule` tool, so
+a rule worth keeping is written into `.ai/rules/<area>.md` by hand and given its
+row in `.ai/rules/index.md`.
+
 ## This application runs in Docker
 
 Seven services in `compose.yaml`: `nginx` -> `php` (php-fpm), plus `horizon`,
