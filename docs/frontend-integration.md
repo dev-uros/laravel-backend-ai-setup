@@ -36,9 +36,12 @@ vrati.
 Za 401/403/404 stiže samo `{ "message": "..." }`. To znači da klijent mora da
 gleda HTTP status, ne oblik tela.
 
-**CORS je već otvoren** za tvoj origin (provereno: preflight sa
-`Origin: http://localhost:5173` vraća `Access-Control-Allow-Origin: *`). Ne treba
-ti proxy u Vite konfiguraciji, ali smeš da ga koristiš ako ti je lakše.
+**CORS propušta tačno jedan origin** — onaj iz `FRONTEND_URL` u backend
+`.env`-u, podrazumevano `http://localhost:5173`. Preflight vraća baš tu vrednost
+u `Access-Control-Allow-Origin`, ne `*`. Ako radiš na drugom portu, ili ti treba
+i staging build, dodaj ih u `CORS_ALLOWED_ORIGINS` (zarezom razdvojeno) — inače
+browser blokira poziv pre nego što stigne do API-ja. Proxy u Vite konfiguraciji
+ti ne treba, ali smeš da ga koristiš.
 
 ---
 
@@ -71,7 +74,9 @@ make demo
 ```
 
 Dobiješ osam naloga sa istorijom od nekih šest nedelja, u svim stanjima koja
-ekrani moraju da pokriju. **Lozinka je `password` za sve.**
+ekrani moraju da pokriju. **Lozinka je `password` za sve.** Tabela ispod je
+zaključana testom (`DemoDataSeederTest`), pa se ne može tiho razminuti sa onim
+što `make demo` zaista napravi.
 
 | nalog | uloga | stanje |
 | --- | --- | --- |
@@ -277,6 +282,9 @@ export type User = {
 }
 ```
 
+Tip iznad je prepisan radi čitanja; **za kod ga ne kucaj ručno** — generiši ga
+iz spec-a (sekcija 10), pa se menja sam kad se API promeni.
+
 Dve uloge i to je sve: **`admin` sme sve, `user` sme samo da čita.** Sakrij
 dugmad koja `user` ne sme da vidi, ali **ne oslanjaj se na to** — API svejedno
 odbija sa 403.
@@ -369,6 +377,10 @@ bi to odalo**. Prikaži poruku koju API vrati, doslovno.
 ---
 
 ## 7. Korisnici
+
+Oblike zahteva i odgovora ne prepisujem ovde — oni su na `/docs/api` i generišu
+se iz koda. Ovo je tabela **ko sme šta**, koju ta dokumentacija ne pokazuje:
+ona čita `auth:sanctum` sa ruta, ali ne i `can:` proveru uloge iza njega.
 
 | akcija | poziv | ko sme |
 | --- | --- | --- |
