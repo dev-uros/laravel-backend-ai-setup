@@ -27,3 +27,10 @@ That helper signs in a user built with `User::factory()->make()` — deliberatel
 Two requests in one test share an application instance and the guard caches the user it resolved, so a test asserting that a revoked token stops working must call `$this->app['auth']->forgetGuards()` in between — otherwise it passes against broken code.
 
 `tests/Feature/Api/User/UsersRequireAuthenticationTest.php` is the only test that would notice a users route leaving the auth group. Keep it in step with the routes.
+
+## Three traps that make a passing suite lie
+**Never hard-code an id in a URL.** Postgres sequences are not rolled back with the transaction `RefreshDatabase` wraps each test in, so ids keep climbing across the suite and `/api/users/1` turns into a 404 somewhere in the middle of a run. Always build the URL from a created model.
+
+**Stub `UncompromisedVerifier`.** The password rules use `uncompromised()`, which calls haveibeenpwned over the network. A suite that reaches out is slow, flaky offline, and leaks password hashes from fixtures.
+
+**jsonb does not preserve key order.** `old_values`/`new_values` come back from Postgres in whatever order it stored them, so assert on them with `assertEquals`, never `assertSame`.

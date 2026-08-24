@@ -7,6 +7,7 @@ Before planning or editing, find the row whose globs match the file's path and r
 | {app/Services/Auth/**,app/Models/LoginAttempt.php,routes/console.php} | .ai/rules/auth-models.md |
 | {app/Services/Auth/**,app/Notifications/**} | .ai/rules/auth-notifications.md |
 | {app/Services/Auth/**,app/Http/Controllers/AuthController.php,app/Data/Auth/**} | .ai/rules/auth.md |
+| {app/Console/**,routes/console.php} | .ai/rules/console.md |
 | app/Http/Controllers/** | .ai/rules/controllers.md |
 | {app/Services/**,app/Data/**} | .ai/rules/data.md |
 | {docker/**,compose*.yaml,deploy.sh} | .ai/rules/docker.md |

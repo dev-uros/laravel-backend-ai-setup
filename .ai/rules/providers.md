@@ -17,3 +17,8 @@ Log decisions and outcomes, not steps. And do not duplicate `user_logs`: the aud
 `App\Logging\RedactProcessor` is a Monolog processor on the channel and strips `RequestContext::REDACTED` keys from the context and extra of every record, whoever wrote it. Add new secret names to that one list, never to a second one.
 
 Services may call the `Log` facade directly; the "no auth()/request() in a service" rule is about ambient state that breaks outside a request, which logging is not.
+
+## Horizon and Pulse are gated on the admin role, not on the environment
+`viewHorizon` (HorizonServiceProvider) and `viewPulse` (AppServiceProvider) are both defined against `UserRole::Admin`. The vendor defaults they replace are "an empty list of emails" and "local environment only" — shut rather than protected, which quietly becomes open the moment someone relaxes them. Both dashboards read production data: queued job payloads carry email addresses, Pulse keeps slow queries with their bindings. `OperationalDashboardsTest` covers them; a new operational dashboard needs the same gate.
+
+Intervention's `ImageManager` is bound here with the GD driver — it cannot be autowired without one, and `gd` + `exif` are installed in `docker/Dockerfile` for it.

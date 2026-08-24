@@ -17,3 +17,5 @@ Both failure kinds share the `invalid_credentials` outcome. Recording "no such u
 Both log tables are MassPrunable, on very different clocks: `LoginAttempt::RETENTION_DAYS` is 180 days, `UserLog::RETENTION_DAYS` is 1095. One daily `model:prune` in routes/console.php covers both and holds no opinion of its own -- how long to keep lives on each model. The `scheduler` container runs it.
 
 Both tables carry a plain index on `created_at` purely for that prune: their other indexes all lead with another column, and MassPrunable deletes in chunks, so without it the cost is one sequential scan per chunk.
+
+`GET /users/{id}/logins` reads the history back and needs the same `viewLogs` ability as the audit trail — same audience, same sensitivity, and one must not be opened up by accident while the other stays shut. It answers "what happened to this account", so the null-`user_id` rows for attempts on invented addresses are deliberately not reachable through it; querying for sweeps is a different question needing a different view.

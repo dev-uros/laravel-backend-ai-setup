@@ -39,3 +39,10 @@ It reuses the same image as `php` and `horizon` and runs as www-data, so files i
 Times are in APP_TIMEZONE (UTC), so `daily()` fires at 00:00 UTC, not local midnight.
 
 To verify the loop actually fires rather than just that the container is up, add a temporary `->everyMinute()` task, watch `docker compose logs scheduler` across a minute boundary, then remove it.
+
+## Redis database split, sessions, and host ports
+Cache is on `REDIS_CACHE_DB=1` and the queue/Horizon on `REDIS_DB=0`, so `cache:clear` cannot drop queued jobs. Sessions are in Postgres, not Redis.
+
+Host ports come from `.env` (`APP_PORT`, `FORWARD_DB_PORT`, ...). Postgres is published on **5433** and the test database on **5434**, because 5432 is commonly taken by a local Postgres install.
+
+Queues are processed by the `horizon` container, never `queue:work`. Horizon holds the application in memory, so after changing job or notification code run `make horizon-restart` — unlike the scheduler, which re-reads `routes/console.php` every tick.

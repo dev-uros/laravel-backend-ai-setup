@@ -17,3 +17,10 @@ Always log `route` (the pattern) beside `path`. In Loki, `request_id`/`user_id`/
 The logger must never break a request: `terminate()` catches everything and degrades to one warning. A test binds a throwing RequestContext and asserts the response is unaffected.
 
 `LOG_CHANNEL=stderr` + `LOG_STDERR_FORMATTER=Monolog\Formatter\JsonFormatter` sends all logs as JSON to the container log (php-fpm's docker.conf has catch_workers_output=yes, decorate_workers_output=no). phpunit.xml sets `LOG_CHANNEL=null` so the suite is not buried; MessageLogged still fires for tests to assert on.
+
+## Log levels, skipped paths, and trusting the proxy
+Levels are assigned from the status: 5xx is `error`, 401/403/429 are `warning` (one is unremarkable, a thousand from one address is not), everything else `info`. Over 1s adds `slow: true`.
+
+`/up`, `horizon/api/*`, `pulse*` and every `OPTIONS` are skipped — constant traffic that says nothing. `LOG_LEVEL=debug` suits local work; production belongs on `info`, or every `Log::debug` in every package is paid for by the gigabyte.
+
+`bootstrap/app.php` calls `trustProxies(at: '*')`. Without it `$request->ip()` is Traefik's container address, and that is the value `user_logs`, `login_attempts` and the request log all record — every row would name the same "person" and nothing would fail. `at: '*'` rather than a fixed CIDR because Docker hands the proxy its address and it changes when the network is recreated; that is safe **only** because nothing publishes a port, so the sole route to PHP is through the proxy. `TrustedProxyTest` covers it.

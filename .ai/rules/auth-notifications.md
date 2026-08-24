@@ -18,3 +18,7 @@ The two emails point at different frontend paths — `/auth/activate-account` an
 `forgot-password` answers identically for a registered, unregistered, and unactivated address, and never throws. Anything else lets an anonymous caller harvest accounts. Covered by a test asserting all three responses are byte-identical.
 
 A successful reset revokes every existing Sanctum token (`$user->tokens()->delete()`), because a reset is how someone recovers a hijacked account. Activation does not need to — there are none yet.
+
+Activation posts `{email, token, password, password_confirmation}` to `/api/auth/activate-account`. `Password::broker()->reset()` does the verifying — it checks the token against its stored hash and deletes it once used, so a link works exactly once; do not hand-roll that check. Expired, spent, or another user's all throw `InvalidActivationTokenException` (422) with a message that does not say which. Activation sets `email_verified_at` and returns a bearer token, so the SPA does not have to bounce the user through the login form.
+
+The password policy lives in the request classes: at least 8 characters, mixed case, a number, a symbol, and `uncompromised()`.
