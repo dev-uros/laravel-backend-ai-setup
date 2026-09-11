@@ -116,8 +116,12 @@ psql-test: ## Open a psql shell on the test database
 	$(DC) exec postgres-test psql -U $(DB_USER) -d $(DB_NAME)_testing
 
 .PHONY: redis-cli
-redis-cli: ## Open a redis-cli shell
+redis-cli: ## Open a redis-cli shell on the QUEUE server
 	$(DC) exec redis redis-cli
+
+.PHONY: redis-cache-cli
+redis-cache-cli: ## Open a redis-cli shell on the CACHE server (a separate instance)
+	$(DC) exec redis-cache redis-cli
 
 # -----------------------------------------------------------------------------
 # Application
@@ -166,8 +170,12 @@ pint: ## Format PHP files with Pint (only the changed ones inside a git repo)
 	fi
 
 .PHONY: horizon-restart
-horizon-restart: ## Gracefully restart the Horizon workers (after a code change)
-	$(PHP) php artisan horizon:terminate
+# `horizon:terminate` signals the master process on the machine it runs on, and
+# Horizon runs in its own container -- issuing it from the `php` container only
+# ever printed "No processes to terminate" while the workers carried on with the
+# old code. Supervisor restarts the terminated master with the new one.
+horizon-restart: ## Gracefully restart the Horizon workers (after a code or config change)
+	$(DC) exec --user www-data horizon php artisan horizon:terminate
 
 # -----------------------------------------------------------------------------
 # First run

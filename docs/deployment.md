@@ -48,8 +48,9 @@ migracijama — i zato pripadaju ovde.
         │  scheduler      │      compose.prod.yaml
         │  postgres       │
         │  redis          │
+        │  redis-cache    │
         └─────────────────┘
-     ── mreža `internal` (bez ijednog objavljenog porta) ──
+  ── mreža `internal` (jedini objavljen port je Postgres na 127.0.0.1) ──
 ```
 
 Nijedan stack ne može da obori drugi. `make prod-down` ne dira Traefik; infra ne
@@ -78,6 +79,14 @@ gigabajta.
 Na 2 GB mašini zakomentariši `COMPOSE_PROFILES` u infra `.env` i čitaj logove
 kroz `make prod-logs`. Swap napravi u svakom slučaju (vidi `server-setup.md` u infra
 repou, korak 1.4) — bez njega build pukne sa `Killed`.
+
+**Podrazumevani plafoni memorije u `compose.prod.yaml` su za server od 8 GB.**
+Na manjoj mašini ne diraj njih nego prekopiraj sekciju `--- Sizing ---` iz
+`.env.production.example` i spusti brojeve tamo — plafoni su `${VAR:-default}`
+baš zato da jedan repo opslužuje i mali i veliki server. Ono što troši memoriju
+je broj PHP procesa (`PHP_FPM_MAX_CHILDREN`, `HORIZON_MAX_PROCESSES`), a ne
+plafon iznad njih: spuštanje samo plafona znači da kernel ubija workere koje
+pool i dalje pokušava da digne.
 
 ### Docker
 
@@ -121,8 +130,14 @@ sudo ufw allow 443/tcp
 sudo ufw enable
 ```
 
-Postgres i Redis ne objavljuju nijedan port, pa nema šta da se zatvara — ali
-firewall je druga brava i košta te jedan minut.
+Redis ne objavljuje nijedan port. Postgres objavljuje `127.0.0.1:5432` — samo
+loopback, da bi Beekeeper ili DataGrip mogli do njega kroz SSH tunel; sa javne
+adrese je nedostupan i bez firewall-a. Ali firewall je druga brava i košta te
+jedan minut.
+
+Klijent se kači tako što u njemu uključiš SSH tunel ka serveru i kao host
+ostaviš `localhost`, port `5432`. Ako je 5432 na serveru već zauzet, promeni
+`DB_HOST_PORT` u `.env.production`.
 
 ---
 
@@ -392,6 +407,9 @@ kontejneru.
 | Email ne stiže | `MAIL_MAILER=log` u `.env.production`, ili SMTP odbija |
 | Avatari 404 | volume `storage-public` nije montiran u oba kontejnera |
 | CORS greška u browseru | `FRONTEND_URL` se ne poklapa tačno sa originom SPA |
+| `scheduler` je `unhealthy` | petlja živi ali više ne okida — `storage/framework/schedule-heartbeat` je stariji od tri minuta; `make prod-logs s=scheduler`, pa restart tog servisa |
+| /horizon ili /pulse su prazni skeleti | Livewire POST vraća 404: route cache je napravljen bez `APP_KEY`. Mora da ide kroz entrypoint, ne kroz `Dockerfile` |
+| Horizon radi po starom kodu | `horizon:terminate` je poslat iz `php` kontejnera. `make horizon-restart` ga šalje u `horizon` |
 
 ---
 

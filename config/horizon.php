@@ -213,9 +213,22 @@ return [
     ],
 
     'environments' => [
+        /**
+         * The process count comes from the environment so that one image can run
+         * on a small server and a large one. The default is what a production box
+         * with room to spare should use -- a server that needs less says so in its
+         * own .env.production, and nothing about the code changes.
+         *
+         * Each process is a PHP worker at a realistic 60-80 MB. Whatever this is
+         * set to has to fit inside HORIZON_MEM_LIMIT (compose.prod.yaml), or the
+         * container is killed while Horizon keeps trying to spawn.
+         *
+         * env() here works only because the entrypoint runs `config:cache` at
+         * container start rather than at build time.
+         */
         'production' => [
             'supervisor-1' => [
-                'maxProcesses' => 10,
+                'maxProcesses' => (int) env('HORIZON_MAX_PROCESSES', 10),
                 'balanceMaxShift' => 1,
                 'balanceCooldown' => 3,
             ],

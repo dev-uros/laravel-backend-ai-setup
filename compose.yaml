@@ -32,12 +32,15 @@ services:
         GID: ${WWWGROUP:-1000}
     image: ${COMPOSE_PROJECT_NAME:-laravel-back-ai-setup}/php:local
     restart: unless-stopped
+    init: true
     volumes:
       - .:/var/www/html
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      redis-cache:
         condition: service_healthy
     networks:
       - app
@@ -55,6 +58,7 @@ services:
         UID: ${WWWUSER:-1000}
         GID: ${WWWGROUP:-1000}
     restart: unless-stopped
+    init: true
     user: www-data
     command: ["php", "artisan", "horizon"]
     volumes:
@@ -66,6 +70,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      redis-cache:
         condition: service_healthy
     networks:
       - app
@@ -90,6 +96,10 @@ services:
         UID: ${WWWUSER:-1000}
         GID: ${WWWGROUP:-1000}
     restart: unless-stopped
+    # schedule:work spawns a child per due task and does not reap it. Measured
+    # here: 913 zombies in four days. php and horizon do not leak -- their
+    # masters reap -- but they carry it too so dev matches the prod anchor.
+    init: true
     user: www-data
     command: ["php", "artisan", "schedule:work"]
     volumes:
@@ -97,10 +107,20 @@ services:
     # schedule:work traps SIGTERM and lets a task that is mid-run finish.
     stop_signal: SIGTERM
     stop_grace_period: 30s
+    healthcheck:
+      # Proves the schedule is still firing, not merely that the process exists.
+      # Same check as production -- see compose.prod.yaml.
+      test: ["CMD-SHELL", "test -n \"$$(find /var/www/html/storage/framework/schedule-heartbeat -mmin -3 2>/dev/null)\""]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      redis-cache:
         condition: service_healthy
     networks:
       - app
@@ -113,6 +133,9 @@ services:
   postgres:
     image: postgres:18-alpine
     restart: unless-stopped
+    # 64 MB is Docker's default for /dev/shm; Postgres uses it for parallel
+    # query and large hash joins. Matches compose.prod.yaml.
+    shm_size: 256mb
     environment:
       POSTGRES_DB: ${DB_DATABASE:-laravel}
       POSTGRES_USER: ${DB_USERNAME:-laravel}
@@ -176,7 +199,8 @@ services:
       - app
 
   # ---------------------------------------------------------------------------
-  # Cache + queue backend. appendonly keeps queued jobs across a restart.
+  # Queue backend. appendonly keeps queued jobs across a restart. The cache has
+  # its own server below, matching production -- see compose.prod.yaml for why.
   # ---------------------------------------------------------------------------
   redis:
     image: redis:8-alpine
@@ -186,6 +210,23 @@ services:
       - "${FORWARD_REDIS_PORT:-6379}:6379"
     volumes:
       - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - app
+
+  # ---------------------------------------------------------------------------
+  # Cache backend. Split from the queue here too, so the arrangement the
+  # application runs on in production is the one it is developed against.
+  # No persistence: a cache that survives a restart buys nothing.
+  # ---------------------------------------------------------------------------
+  redis-cache:
+    image: redis:8-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory-policy", "allkeys-lru"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s

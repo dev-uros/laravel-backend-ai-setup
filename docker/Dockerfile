@@ -118,9 +118,23 @@ RUN chmod +x /usr/local/bin/entrypoint
 
 COPY --from=vendor /var/www/html /var/www/html
 
-# route, view and event caches hold nothing environment specific, so they are
-# built here and cost nothing at boot. config:cache is deliberately NOT here --
-# see docker/php/entrypoint.sh for why it has to happen at container start.
+# view and event caches hold nothing environment specific, so they are built here
+# and cost nothing at boot.
+#
+# `route:cache` is NOT here, and that is not an oversight. Livewire v4 -- which
+# Horizon's and Pulse's dashboards run on -- derives its endpoint from the
+# application key:
+#
+#     $hash = substr(hash('sha256', config('app.key').'livewire-endpoint'), 0, 8);
+#
+# There is no key at build time -- `.env.production` is dockerignored, and rightly
+# so -- and the route would be cached under the hash of an empty string. The page
+# renders the hash of the real key at runtime, so every Livewire POST lands on a
+# route that was never registered: /pulse and /horizon answer 404 to their own
+# JavaScript, with nothing in any log to explain it.
+#
+# So it moved to docker/php/entrypoint.sh, next to `config:cache`, for exactly the
+# same reason that one is there.
 RUN mkdir -p \
         storage/framework/cache/data \
         storage/framework/sessions \
@@ -130,7 +144,6 @@ RUN mkdir -p \
         storage/app/private \
         bootstrap/cache \
     && ln -sfn ../storage/app/public public/storage \
-    && php artisan route:cache \
     && php artisan view:cache \
     && php artisan event:cache \
     && chown -R www-data:www-data storage bootstrap/cache

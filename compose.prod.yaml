@@ -30,6 +30,11 @@ x-logging: &logging
 # request that queued it.
 x-app: &app
   image: ${APP_IMAGE:-laravel-back-ai-setup/app}:current
+  # `php artisan schedule:work` spawns a child per due task and does not reap it.
+  # Measured: 913 zombies in four days on the development stack, none in php or
+  # horizon -- their masters reap their own children. Without an init process the
+  # scheduler is the one service here that leaks PIDs indefinitely.
+  init: true
   build:
     context: .
     dockerfile: docker/Dockerfile
@@ -43,6 +48,8 @@ x-app: &app
     postgres:
       condition: service_healthy
     redis:
+      condition: service_healthy
+    redis-cache:
       condition: service_healthy
   networks:
     - internal
@@ -60,6 +67,7 @@ services:
       dockerfile: docker/Dockerfile
       target: web
     restart: unless-stopped
+    mem_limit: ${NGINX_MEM_LIMIT:-256m}
     volumes:
       # Read-only: nginx serves avatars, it never writes one.
       - storage-public:/var/www/html/storage/app/public:ro
@@ -95,6 +103,14 @@ services:
   # ---------------------------------------------------------------------------
   php:
     <<: *app
+    # The default covers 12 workers (PHP_FPM_MAX_CHILDREN) at a realistic 60-80 MB
+    # plus 256 MB of opcache shared by the pool. PHP's own memory_limit=256M kills
+    # a runaway request long before this, so the ceiling covers the pool -- not
+    # 12 x 256 MB. Lower both this and the worker count together on a small box;
+    # raising the limit alone buys nothing, and lowering it alone starts OOM
+    # killing workers the pool is still configured to spawn.
+    mem_limit: ${PHP_MEM_LIMIT:-1536m}
+    memswap_limit: ${PHP_MEM_LIMIT:-1536m}
     healthcheck:
       # Confirms the worker pool is accepting connections. nginx's healthcheck
       # covers the rest of the path, through to Laravel and back.
@@ -109,6 +125,11 @@ services:
   # ---------------------------------------------------------------------------
   horizon:
     <<: *app
+    # The default covers HORIZON_MAX_PROCESSES workers (config/horizon.php), same
+    # per-process guard as php-fpm. Equal memswap so a leaking worker dies cleanly
+    # instead of thrashing swap and dragging the whole box down with it.
+    mem_limit: ${HORIZON_MEM_LIMIT:-1536m}
+    memswap_limit: ${HORIZON_MEM_LIMIT:-1536m}
     command: ["php", "artisan", "horizon"]
     # Horizon traps SIGTERM and finishes the job in flight before exiting.
     stop_signal: SIGTERM
@@ -125,21 +146,73 @@ services:
   # ---------------------------------------------------------------------------
   scheduler:
     <<: *app
+    mem_limit: ${SCHEDULER_MEM_LIMIT:-512m}
+    memswap_limit: ${SCHEDULER_MEM_LIMIT:-512m}
     command: ["php", "artisan", "schedule:work"]
     stop_signal: SIGTERM
     stop_grace_period: 60s
+    healthcheck:
+      # NOT "is the process alive": PID 1 dying takes the container with it and
+      # `restart: unless-stopped` already handles that. This proves the schedule is
+      # still *firing* -- routes/console.php touches the file every minute, so three
+      # minutes of silence means the loop stalled while the process kept running.
+      test: ["CMD-SHELL", "test -n \"$$(find /var/www/html/storage/framework/schedule-heartbeat -mmin -3 2>/dev/null)\""]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
 
   # ---------------------------------------------------------------------------
   # Database. PostgreSQL 18 moved its VOLUME to /var/lib/postgresql and made
   # PGDATA version specific. Mounting the pre-18 /var/lib/postgresql/data here
   # would still boot and would silently persist nothing.
   #
-  # No `ports:` -- reach it with `make prod-psql`, which goes through docker
-  # exec. A published 5432 on a public IP is found by scanners within hours.
+  # Published on the LOOPBACK ONLY, and the `127.0.0.1:` prefix is the whole of
+  # what makes that safe. `5432:5432` binds 0.0.0.0 and puts Postgres on the
+  # public IP, where scanners find it within hours; with the prefix the socket
+  # exists only for something already on the machine.
+  #
+  # It is there so a database client can reach it over an SSH tunnel -- Beekeeper
+  # Studio and DataGrip both tunnel natively, and both then connect to
+  # `localhost:5432` on the server. Forwarding straight to the container's own
+  # address works without this, but Docker reassigns that address whenever the
+  # network is recreated, so every client would silently stop connecting one day.
+  #
+  # `make prod-psql` still works and needs none of this.
   # ---------------------------------------------------------------------------
   postgres:
     image: postgres:18-alpine
     restart: unless-stopped
+    ports:
+      - "127.0.0.1:${DB_HOST_PORT:-5432}:5432"
+    # Docker gives /dev/shm 64 MB. Postgres uses it for parallel query and large
+    # hash joins, and exhausting it fails the query -- not the server -- with
+    # "could not resize shared memory segment", which reads like a random bug.
+    shm_size: ${PG_SHM_SIZE:-256mb}
+    mem_limit: ${PG_MEM_LIMIT:-3g}
+    # The kernel picks its OOM victim by score, and Postgres -- long-lived and
+    # large -- is a natural favourite. This puts it last in line: on a box under
+    # memory pressure something else should die first.
+    oom_score_adj: -500
+    # Postgres ships tuned for a machine far smaller than this one: shared_buffers
+    # defaults to 128 MB. These are the four that matter, and the defaults below
+    # are sized for an 8 GB server -- override them in .env.production on anything
+    # smaller.
+    #
+    # effective_cache_size allocates nothing: it tells the planner how much OS
+    # cache it may assume. Leaving 2GB on a 4 GB box shared with PHP and Redis is
+    # not a memory problem but a planning one -- the planner keeps choosing index
+    # scans on the strength of cache that is not there.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=${PG_SHARED_BUFFERS:-512MB}
+      - -c
+      - effective_cache_size=${PG_EFFECTIVE_CACHE_SIZE:-2GB}
+      - -c
+      - work_mem=${PG_WORK_MEM:-16MB}
+      - -c
+      - maintenance_work_mem=${PG_MAINTENANCE_WORK_MEM:-256MB}
     environment:
       POSTGRES_DB: ${DB_DATABASE}
       POSTGRES_USER: ${DB_USERNAME}
@@ -158,7 +231,7 @@ services:
     <<: *logging
 
   # ---------------------------------------------------------------------------
-  # Cache + queue backend.
+  # Queue backend. The cache lives on its own server below -- see there for why.
   #
   # noeviction, not the usual allkeys-lru: db 0 holds the queue, and an eviction
   # policy that is free to drop keys under memory pressure is free to drop a
@@ -167,6 +240,9 @@ services:
   redis:
     image: redis:8-alpine
     restart: unless-stopped
+    # Above REDIS_MAXMEMORY: the ceiling is what Redis stores, this is what the
+    # process costs -- overhead, fragmentation and the AOF buffer on top.
+    mem_limit: ${REDIS_MEM_LIMIT:-768m}
     command:
       - redis-server
       - --appendonly
@@ -179,6 +255,46 @@ services:
       - noeviction
     volumes:
       - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    networks:
+      - internal
+    <<: *logging
+
+  # ---------------------------------------------------------------------------
+  # Cache backend. A second server, not a second database on `redis`.
+  #
+  # maxmemory in Redis is per instance, never per database, so `noeviction` above
+  # protects the queue from eviction and then exposes it to the cache: a cache
+  # growing into that shared ceiling starts failing dispatch(). Splitting them is
+  # the only fix Redis offers.
+  #
+  # Here allkeys-lru is the correct policy -- dropping a cold key is what a cache
+  # is for. No appendonly, no save, no volume: a cache that survives a restart
+  # buys nothing and costs an fsync on every write.
+  # ---------------------------------------------------------------------------
+  redis-cache:
+    image: redis:8-alpine
+    restart: unless-stopped
+    mem_limit: ${REDIS_CACHE_MEM_LIMIT:-384m}
+    command:
+      - redis-server
+      - --requirepass
+      - ${REDIS_PASSWORD}
+      - --maxmemory
+      - ${REDIS_CACHE_MAXMEMORY:-256mb}
+      - --maxmemory-policy
+      - allkeys-lru
+      - --save
+      - ""
+      - --appendonly
+      - "no"
     healthcheck:
       test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
       interval: 10s
@@ -212,6 +328,7 @@ networks:
   # Everything else. Deliberately NOT `internal: true` -- the application needs
   # outbound access for SMTP and for the haveibeenpwned lookup that
   # `uncompromised()` performs on every password rule. What it has is no inbound
-  # route: not one service here publishes a port.
+  # route from the outside: the only published port is Postgres on 127.0.0.1,
+  # reachable through an SSH tunnel and from nowhere else.
   internal:
     driver: bridge

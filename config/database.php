@@ -168,7 +168,13 @@ return [
 
         'cache' => [
             'url' => env('REDIS_URL'),
-            'host' => env('REDIS_HOST', '127.0.0.1'),
+            // Its own server in production. The queue's Redis runs `noeviction` so a
+            // job can never be silently dropped -- which also means a shared instance
+            // lets the cache fill that ceiling and start failing `dispatch()`. Redis
+            // has no per-database limit, so separating them is the only fix.
+            // Falls back to REDIS_HOST, so an environment that sets neither keeps
+            // working on one server.
+            'host' => env('REDIS_CACHE_HOST', env('REDIS_HOST', '127.0.0.1')),
             'username' => env('REDIS_USERNAME'),
             'password' => env('REDIS_PASSWORD'),
             'port' => env('REDIS_PORT', '6379'),

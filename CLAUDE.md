@@ -47,11 +47,17 @@ row in `.ai/rules/index.md`.
 
 ## This application runs in Docker
 
-Seven services in `compose.yaml`: `nginx` -> `php` (php-fpm), plus `horizon`,
-`scheduler`, `postgres`, `postgres-test` and `redis`. They build the `dev`
-target of `docker/Dockerfile`, which also holds the production stages — one file
-on purpose, so the PHP version and extension list cannot drift between dev and
-prod.
+Eight services in `compose.yaml`: `nginx` -> `php` (php-fpm), plus `horizon`,
+`scheduler`, `postgres`, `postgres-test`, `redis` (queue) and `redis-cache`.
+They build the `dev` target of `docker/Dockerfile`, which also holds the
+production stages — one file on purpose, so the PHP version and extension list
+cannot drift between dev and prod.
+
+`php`, `horizon` and `scheduler` all carry `init: true`, and the scheduler is the
+reason: `schedule:work` spawns a child per due task and never reaps it — 913
+zombies in four days, measured. Its healthcheck reads the age of
+`storage/framework/schedule-heartbeat`, which `routes/console.php` touches every
+minute, because a process-liveness check on that container proves nothing.
 
 **Never run `php`, `composer`, `artisan` or `phpunit` on the host.**
 `DB_HOST=postgres` and `REDIS_HOST=redis` only resolve inside the Compose
@@ -177,9 +183,12 @@ that make a suite pass against broken code, and what must be stubbed.
 
 - PostgreSQL 18. The Compose volume mounts `/var/lib/postgresql`, **not** the
   pre-18 `/var/lib/postgresql/data`, which still boots but persists nothing.
-- Cache and queue are Redis on separate databases (`REDIS_CACHE_DB=1`,
-  `REDIS_DB=0`), so `cache:clear` cannot drop queued jobs. Sessions are in
-  Postgres.
+- Cache and queue are separate Redis **servers** (`redis-cache` and `redis`), not
+  two databases on one: `maxmemory` is per instance, so a cache sharing the
+  queue's `noeviction` ceiling starts failing `dispatch()`. `REDIS_CACHE_HOST`
+  falls back to `REDIS_HOST`. The logical databases (`REDIS_DB=0`,
+  `REDIS_CACHE_DB=1`) stay as they are, so `cache:clear` cannot drop queued jobs.
+  Sessions are in Postgres.
 - Queues run in the `horizon` container; after changing job code,
   `make horizon-restart`. Scheduled tasks run in `scheduler` and need no restart.
 - Postgres is published on host port **5433**, the test database on **5434**.

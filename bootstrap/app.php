@@ -23,16 +23,20 @@ return Application::configure(basePath: dirname(__DIR__))
          * different person. `url()` would also emit http:// links behind an
          * https site.
          *
-         * `at: '*'` rather than a fixed CIDR: the proxy's address is handed out
-         * by Docker and changes whenever the network is recreated, and a
-         * trusted range that silently stops matching fails the same way as
-         * having none. It is safe only because no container in
-         * compose.prod.yaml publishes a port -- the sole route to PHP is
-         * through the proxy, which overwrites these headers rather than
-         * appending to whatever a caller sent.
+         * The **private ranges**, not `at: '*'`. Docker hands the proxy's
+         * address out afresh whenever the network is recreated, so a single
+         * pinned address would silently stop matching -- but every address it
+         * can hand out is private, so the ranges cover it without ever going
+         * stale.
+         *
+         * `'*'` looks safe here -- nothing but the proxy can reach PHP -- but it
+         * also declares the outside world a trusted proxy, and that is what
+         * breaks Horizon and Pulse: Laravel Sentinel sits in front of both and
+         * refuses a `local` request that has a public address **and** claims to
+         * arrive through a proxy we trust, which with `'*'` is every request.
          */
         $middleware->trustProxies(
-            at: '*',
+            at: ['127.0.0.1', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', 'fc00::/7', '::1'],
             headers: Request::HEADER_X_FORWARDED_FOR
                 | Request::HEADER_X_FORWARDED_HOST
                 | Request::HEADER_X_FORWARDED_PORT

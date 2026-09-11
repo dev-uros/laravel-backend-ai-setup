@@ -239,10 +239,19 @@ ok "built $revision"
 
 step "Database and cache"
 
+# redis-cache belongs here and not with the rest of the stack, however much it
+# looks like a service only the application talks to. `artisan down` two steps
+# below writes the maintenance flag through the cache store
+# (APP_MAINTENANCE_DRIVER=cache), and that store's connection is REDIS_CACHE_HOST
+# -- a different server from the queue's. Starting only `redis` leaves the
+# command resolving a hostname that does not exist yet, and the deploy dies at
+# the one step whose whole purpose is to keep the site from serving half-migrated
+# pages. `run --no-deps` means depends_on cannot save it either.
 STACK_TOUCHED=1
-"${APP_DC[@]}" up -d postgres redis
-wait_healthy postgres || fail "postgres never became healthy"
-wait_healthy redis    || fail "redis never became healthy"
+"${APP_DC[@]}" up -d postgres redis redis-cache
+wait_healthy postgres    || fail "postgres never became healthy"
+wait_healthy redis       || fail "redis never became healthy"
+wait_healthy redis-cache || fail "redis-cache never became healthy"
 
 # -----------------------------------------------------------------------------
 # 5. Backup -- before a migration, never after
