@@ -37,6 +37,7 @@ The dev-only `compose.observability.yaml` stays in this repo on purpose: on a la
 - **Maintenance mode is held in Redis** (`APP_MAINTENANCE_DRIVER=cache`), so one container switching it on takes all four out of service. A file flag lives inside one container's filesystem and leaves the other three serving traffic. The exit trap lifts it whatever else went wrong.
 - **Health is proven**: it polls `/up` through nginx and does not report success until it answers.
 - **Previous images are kept as `:previous`**; `make rollback` puts them back. It does not revert migrations — that is what the dump is for.
+- **Only that pair survives a deploy.** The cleanup step removes every revision tag except the ones naming `:current`, `:previous` or `:failed`, and trims the build cache to 5 GB. Don't rely on an older `:<hash>` image still being there.
 
 `.env.production` is gitignored and dockerignored, read twice (by compose for `${API_DOMAIN}` interpolation, and by the containers as their environment), and never enters an image. **No `${VAR}` references inside it**: compose passes those lines through verbatim, so `APP_URL=https://${API_DOMAIN}` arrives at PHP as that literal string.
 

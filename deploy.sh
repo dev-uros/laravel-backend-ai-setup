@@ -310,8 +310,38 @@ wait_healthy horizon 30 || warn "horizon is not reporting healthy yet -- check: 
 # -----------------------------------------------------------------------------
 
 step "Cleanup"
+
+# Every deploy tags its build with the commit as well as :current, and nothing
+# ever removed those tags: `image prune` only takes untagged images, so a tagged
+# one stays forever. Rollback only ever reads :previous, so this keeps the pair
+# that matters -- :current and :previous, plus :failed from a rollback -- and the
+# revision tags that still name one of them, and drops the rest.
+prune_old_tags() {
+    local repo=$1 keep_ids="" id tag
+    for tag in current previous failed; do
+        id=$(docker image inspect -f '{{.Id}}' "$repo:$tag" 2>/dev/null) && keep_ids="$keep_ids $id"
+    done
+    docker images "$repo" --format '{{.Tag}}' | while read -r tag; do
+        case $tag in current|previous|failed|'<none>') continue ;; esac
+        id=$(docker image inspect -f '{{.Id}}' "$repo:$tag" 2>/dev/null) || continue
+        case " $keep_ids " in *" $id "*) continue ;; esac
+        docker rmi "$repo:$tag" >/dev/null 2>&1 || true
+    done
+}
+prune_old_tags "$app_image"
+prune_old_tags "$web_image"
+info "old revision tags removed (kept :current and :previous)"
+
 docker image prune -f >/dev/null 2>&1 || true
 info "dangling images removed"
+
+# The build cache grows with every build and nothing else ever trims it.
+# 5 GB keeps the layers a rebuild actually reuses (composer and the base image),
+# so the next deploy is still quick. --reserved-space is Docker 28+; older
+# daemons only know the former name of the same flag.
+docker builder prune -f --reserved-space 5gb >/dev/null 2>&1 \
+    || docker builder prune -f --keep-storage 5gb >/dev/null 2>&1 || true
+info "build cache trimmed to 5 GB"
 
 printf '\n%s==> deployed %s%s\n\n' "$C_OK" "$revision" "$C_OFF"
 printf '    api      https://%s\n' "$(env_get API_DOMAIN)"

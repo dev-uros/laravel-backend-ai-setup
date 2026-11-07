@@ -307,6 +307,8 @@ git pull
 7. **Kontejneri se recreate-uju** sa novim image-om
 8. **Maintenance se gasi**
 9. **Health gate** — poll `/up` dok ne odgovori; ne kaže "deployed" dok ne prođe
+10. **Čišćenje** — stari revision tagovi se brišu, ostaju samo `:current`, `:previous`
+    i `:failed`; build keš se skraćuje na 5 GB, pa disk ne raste sa svakim deploy-em
 
 Traje oko minut kad se `vendor` sloj recikliran, 2-3 minuta kad se menjao
 `composer.lock`.
