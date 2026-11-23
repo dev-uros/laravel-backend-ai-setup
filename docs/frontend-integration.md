@@ -328,6 +328,31 @@ ceni: **XSS na tvom frontendu čita `localStorage`.** Alternativa je token samo 
 memoriji (nestaje na refresh, pa se ponovo loguješ). Ako biraš `localStorage`,
 onda ozbiljno shvati sanitizaciju svega što renderuješ.
 
+### Mobilna aplikacija: uređaj i push obaveštenja
+
+Samo za internu mobilnu aplikaciju — web ništa od ovoga ne šalje i ne mora.
+
+- **Prijava** šalje i objekat `device` (`device_id`, `platform` obavezni:
+  `ios` | `android`; `name`, `operating_system`, `manufacturer`, `os_version`
+  opcioni). Red u `internal_user_devices` se pravi ili ažurira po
+  (korisnik, `device_id`) i vezuje za token koji prijava vraća.
+- **Pri svakom pokretanju** sa sačuvanim tokenom aplikacija šalje
+  `PUT /auth/device` sa istim poljima — osvežava `os_version` i
+  `last_seen_at`, i pravi red ako ga sesija nema.
+- **Push token** ide na isti `PUT /auth/device`, kao
+  `expo_push_notification_token`. Polje je trostruko: **izostavljeno** ne dira
+  sačuvani token, `null` gasi obaveštenja, vrednost ih pali. Zato prijava i
+  obično pokretanje nikad ne brišu token.
+- Uređaj se uvek nalazi **po sesiji**, nikad po id-ju iz putanje, pa korisnik
+  ne može ni da imenuje tuđi telefon. Sesija bez uređaja (web) dobija 404.
+- **Odjava gasi push na tom telefonu** bez ikakvog posebnog poziva: brisanje
+  tokena (odjava, reset lozinke, isključenje naloga) baza prati tako što
+  odvezuje uređaj, a push ide samo na uređaje sa živom sesijom.
+- `POST /auth/device/test-push` šalje probno obaveštenje samo na ovaj telefon;
+  409 kad obaveštenja na njemu nisu uključena.
+- Podešavanje stvarnog slanja (Expo projekat, Firebase, APNs, `EXPO_ACCESS_TOKEN`)
+  opisano je u mobilnom repou: `docs/push-notifications.md`.
+
 ---
 
 ## 6. Dve stranice koje moraš da napraviš za linkove iz mejlova

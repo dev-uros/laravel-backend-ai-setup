@@ -8,10 +8,12 @@ use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\HasApiTokens;
+use NotificationChannels\Expo\ExpoPushToken;
 
 #[Fillable(['name', 'surname', 'email', 'password', 'role'])]
 #[Hidden(['password', 'remember_token'])]
@@ -71,5 +73,32 @@ class User extends Authenticatable
         return $this->avatar_path === null
             ? null
             : Storage::disk(self::AVATAR_DISK)->url($this->avatar_path);
+    }
+
+    /**
+     * The phones this account has signed in on with the mobile app.
+     *
+     * @return HasMany<InternalUserDevice, $this>
+     */
+    public function internalUserDevices(): HasMany
+    {
+        return $this->hasMany(InternalUserDevice::class);
+    }
+
+    /**
+     * Where an Expo push for this account goes: every phone that allows
+     * notifications and is still signed in. Empty for an account that is
+     * switched off -- deactivation deletes its tokens, which unbinds its
+     * devices.
+     *
+     * @return array<int, ExpoPushToken>
+     */
+    public function routeNotificationForExpo(): array
+    {
+        return $this->internalUserDevices()
+            ->reachable()
+            ->pluck('expo_push_notification_token')
+            ->map(fn (string $token): ExpoPushToken => ExpoPushToken::make($token))
+            ->all();
     }
 }

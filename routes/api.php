@@ -1,6 +1,8 @@
 <?php
 
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\InternalUserDevice\SendTestPushController;
+use App\Http\Controllers\InternalUserDeviceController;
 use App\Http\Controllers\User\DeactivateUserController;
 use App\Http\Controllers\User\DeleteUserAvatarController;
 use App\Http\Controllers\User\IndexLoginAttemptsController;
@@ -11,6 +13,7 @@ use App\Http\Controllers\User\UpdateUserAvatarController;
 use App\Http\Controllers\User\UpdateUserRoleController;
 use App\Http\Controllers\UserController;
 use App\Http\Middleware\EnsureAccountIsActive;
+use App\Models\InternalUserDevice;
 use App\Models\User;
 use Illuminate\Support\Facades\Route;
 
@@ -46,6 +49,26 @@ Route::middleware(['auth:sanctum', EnsureAccountIsActive::class])->group(functio
     Route::post('auth/logout', [AuthController::class, 'logout'])->name('auth.logout');
 
     Route::get('auth/me', [AuthController::class, 'me'])->name('auth.me');
+
+    /**
+     * The phone this session is on -- the mobile app's, for internal users.
+     * No id in the path: the token is the session and the session is the
+     * phone, so a caller cannot even name somebody else's device.
+     */
+    Route::get('auth/device', [InternalUserDeviceController::class, 'show'])
+        ->middleware('can:manageOwn,'.InternalUserDevice::class)
+        ->name('auth.device.show');
+
+    Route::put('auth/device', [InternalUserDeviceController::class, 'update'])
+        ->middleware('can:manageOwn,'.InternalUserDevice::class)
+        ->name('auth.device.update');
+
+    /**
+     * Throttled because each call is a real request to Expo's push service.
+     */
+    Route::post('auth/device/test-push', SendTestPushController::class)
+        ->middleware(['can:manageOwn,'.InternalUserDevice::class, 'throttle:5,1'])
+        ->name('auth.device.test-push');
 
     /**
      * Authorised by UserPolicy through the `can:` middleware, so who may reach

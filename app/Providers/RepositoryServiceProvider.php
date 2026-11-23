@@ -2,9 +2,11 @@
 
 namespace App\Providers;
 
+use App\Repositories\Contracts\InternalUserDeviceRepositoryInterface;
 use App\Repositories\Contracts\LoginAttemptRepositoryInterface;
 use App\Repositories\Contracts\UserLogRepositoryInterface;
 use App\Repositories\Contracts\UserRepositoryInterface;
+use App\Repositories\InternalUserDeviceRepository;
 use App\Repositories\LoginAttemptRepository;
 use App\Repositories\UserLogRepository;
 use App\Repositories\UserRepository;
@@ -21,5 +23,6 @@ class RepositoryServiceProvider extends ServiceProvider
         UserRepositoryInterface::class => UserRepository::class,
         UserLogRepositoryInterface::class => UserLogRepository::class,
         LoginAttemptRepositoryInterface::class => LoginAttemptRepository::class,
+        InternalUserDeviceRepositoryInterface::class => InternalUserDeviceRepository::class,
     ];
 }

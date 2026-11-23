@@ -37,3 +37,4 @@ Before planning or editing, find the row whose globs match the file's path and r
 | tests/** | .ai/rules/tests.md |
 | {app/Services/User/**,app/Exceptions/**} | .ai/rules/user-exceptions.md |
 | {app/Services/User/**,app/Models/User.php,app/Http/Requests/User/**} | .ai/rules/user.md |
+| {app/Models/InternalUserDevice.php,app/Services/InternalUserDevice/**,app/Repositories/*InternalUserDevice*,app/Http/Controllers/InternalUserDevice*/**,app/Http/Controllers/InternalUserDeviceController.php,app/Services/Auth/LoginService.php,app/Listeners/**,app/Notifications/**} | .ai/rules/internal-user-devices.md |

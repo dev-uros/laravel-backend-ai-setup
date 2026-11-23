@@ -9,6 +9,8 @@ use App\Enums\LoginOutcome;
 use App\Exceptions\AccountDeactivatedException;
 use App\Exceptions\InvalidCredentialsException;
 use App\Repositories\Contracts\UserRepositoryInterface;
+use App\Services\InternalUserDevice\RegisterInternalUserDeviceService;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 
 class LoginService
@@ -24,6 +26,7 @@ class LoginService
     public function __construct(
         private readonly UserRepositoryInterface $users,
         private readonly RecordLoginAttemptService $recordAttempt,
+        private readonly RegisterInternalUserDeviceService $registerDevice,
     ) {}
 
     /**
@@ -73,6 +76,21 @@ class LoginService
 
         $this->recordAttempt->handle($user, $data->email, LoginOutcome::Succeeded, $actor);
 
-        return new AuthenticatedUserData($user, $user->createToken('spa')->plainTextToken);
+        if ($data->device === null) {
+            return new AuthenticatedUserData($user, $user->createToken('spa')->plainTextToken);
+        }
+
+        /**
+         * The mobile app names the phone it signs in on. The token and the
+         * device row are written together, so a failure cannot leave a session
+         * the app was never told about, or a phone bound to no session.
+         */
+        return DB::transaction(function () use ($user, $data): AuthenticatedUserData {
+            $token = $user->createToken('mobile');
+
+            $this->registerDevice->handle($user->id, $token->accessToken->id, $data->device);
+
+            return new AuthenticatedUserData($user, $token->plainTextToken);
+        });
     }
 }
