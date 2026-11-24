@@ -352,6 +352,13 @@ Samo za internu mobilnu aplikaciju — web ništa od ovoga ne šalje i ne mora.
   409 kad obaveštenja na njemu nisu uključena.
 - Podešavanje stvarnog slanja (Expo projekat, Firebase, APNs, `EXPO_ACCESS_TOKEN`)
   opisano je u mobilnom repou: `docs/push-notifications.md`.
+- **Minimalna verzija aplikacije:** `GET /mobile/app-version/{ios|android}`
+  je javan (bez tokena) — aplikacija ga pita pri pokretanju i pri svakom
+  povratku u prvi plan, pre prijave. `minimum_version` je najstarija verzija
+  koja sme da radi (`null` = nema minimuma); starija aplikacija prikazuje samo
+  ekran „Potrebno je ažuriranje" sa linkom `store_url`. Vrednosti su u `.env`
+  (`MOBILE_*`, vidi `config/mobile.php`). Minimum se diže tek kad je nova
+  verzija već dostupna u toj prodavnici.
 
 ---
 

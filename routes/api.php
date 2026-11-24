@@ -1,8 +1,10 @@
 <?php
 
+use App\Enums\DevicePlatform;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\InternalUserDevice\SendTestPushController;
 use App\Http\Controllers\InternalUserDeviceController;
+use App\Http\Controllers\MobileAppVersionController;
 use App\Http\Controllers\User\DeactivateUserController;
 use App\Http\Controllers\User\DeleteUserAvatarController;
 use App\Http\Controllers\User\IndexLoginAttemptsController;
@@ -39,6 +41,17 @@ Route::post('auth/forgot-password', [AuthController::class, 'forgotPassword'])
 Route::post('auth/reset-password', [AuthController::class, 'resetPassword'])
     ->middleware('throttle:10,1')
     ->name('auth.reset-password');
+
+/**
+ * Asked by the mobile app on every launch, before it knows whether anyone is
+ * signed in: an app too old to talk to this API must be stopped at the door,
+ * login screen included. Public, and throttled like the rest -- generously,
+ * because a phone asks again on every return to the foreground.
+ */
+Route::get('mobile/app-version/{platform}', [MobileAppVersionController::class, 'show'])
+    ->whereIn('platform', array_column(DevicePlatform::cases(), 'value'))
+    ->middleware('throttle:60,1')
+    ->name('mobile.app-version.show');
 
 /**
  * Everything else. The middleware is stated once for the whole group so a new
