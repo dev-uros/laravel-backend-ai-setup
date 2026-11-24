@@ -2,6 +2,8 @@
 
 namespace App\Logging;
 
+use App\Models\MobileUser;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Validation\ValidationException;
@@ -36,17 +38,23 @@ class RequestContext
         'access_token',
         'refresh_token',
         'secret',
+        'code',
+        'id_token',
+        'authorization_code',
+        'apple_authorization_code',
+        'nonce',
     ];
 
     /**
      * Requests whose body is dropped whole rather than redacted field by field.
      *
      * Everything posted to these is either a credential or a token, so there is
-     * nothing left worth keeping once the secrets are gone.
+     * nothing left worth keeping once the secrets are gone. The external app's
+     * sign-in codes and Google/Apple tokens are among them.
      *
      * @var array<int, string>
      */
-    private const BODY_OMITTED_FROM = ['api/auth/*'];
+    private const BODY_OMITTED_FROM = ['api/auth/*', 'api/mobile/v1/auth/*'];
 
     /**
      * How much encoded body is kept. Past this the body is dropped and its size
@@ -90,7 +98,13 @@ class RequestContext
             'ip' => $request->ip(),
             'user_agent' => $request->userAgent(),
             'user_id' => $request->user()?->id,
-            'user_role' => $request->user()?->role->value,
+            /** Which population the id belongs to: `users` and `mobile_users` both start at 1. */
+            'user_type' => match (true) {
+                $request->user() instanceof User => 'internal',
+                $request->user() instanceof MobileUser => 'mobile',
+                default => null,
+            },
+            'user_role' => $request->user() instanceof User ? $request->user()->role->value : null,
             'error' => $this->error($response),
         /**
          * Empty arrays are dropped along with nulls: they say nothing, and

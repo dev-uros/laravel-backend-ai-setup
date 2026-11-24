@@ -3,6 +3,7 @@
 namespace App\Listeners;
 
 use App\Repositories\Contracts\InternalUserDeviceRepositoryInterface;
+use App\Repositories\Contracts\MobileUserDeviceRepositoryInterface;
 use Illuminate\Support\Facades\Log;
 use NotificationChannels\Expo\Events\ExpoNotificationFailed;
 
@@ -17,7 +18,10 @@ use NotificationChannels\Expo\Events\ExpoNotificationFailed;
  */
 class ForgetUnregisteredExpoToken
 {
-    public function __construct(private readonly InternalUserDeviceRepositoryInterface $devices) {}
+    public function __construct(
+        private readonly InternalUserDeviceRepositoryInterface $devices,
+        private readonly MobileUserDeviceRepositoryInterface $mobileDevices,
+    ) {}
 
     public function handle(ExpoNotificationFailed $event): void
     {
@@ -25,7 +29,10 @@ class ForgetUnregisteredExpoToken
             return;
         }
 
-        if ($this->devices->forgetPushTokens([$event->error->token->asString()]) > 0) {
+        $token = [$event->error->token->asString()];
+
+        /** Either app's phone: one token is only ever in one of the two tables. */
+        if ($this->devices->forgetPushTokens($token) + $this->mobileDevices->forgetPushTokens($token) > 0) {
             Log::info('expo token forgotten', ['reason' => 'device_not_registered']);
         }
     }

@@ -44,4 +44,33 @@ return [
         ],
     ],
 
+    /**
+     * Sign in with Google in the external mobile app. Every client ID whose
+     * tokens are accepted as `aud`, comma-separated: the web client (which the
+     * app passes as `webClientId` -- what Google puts in `aud` on both
+     * platforms), plus the iOS and Android clients. Empty: the route answers
+     * 503 and the app hides its button anyway. See the app's docs/sign-in.md.
+     */
+    'google_oauth' => [
+        'client_ids' => array_values(array_filter(array_map('trim', explode(',', (string) env('GOOGLE_OAUTH_CLIENT_IDS', ''))))),
+    ],
+
+    /**
+     * Sign in with Apple in the external mobile app.
+     *
+     * `client_ids`: the bundle IDs of the app's variants, comma-separated --
+     * the `aud` of an identity token. Enough to sign in.
+     *
+     * `team_id`, `key_id`, `private_key_base64`: the Sign in with Apple key
+     * (.p8, base64 on one line), used only to revoke a deleted account's
+     * authorisation, which App Review requires. Secrets: environment only,
+     * never committed.
+     */
+    'apple_oauth' => [
+        'client_ids' => array_values(array_filter(array_map('trim', explode(',', (string) env('APPLE_CLIENT_IDS', ''))))),
+        'team_id' => env('APPLE_TEAM_ID'),
+        'key_id' => env('APPLE_KEY_ID'),
+        'private_key_base64' => env('APPLE_PRIVATE_KEY_BASE64'),
+    ],
+
 ];

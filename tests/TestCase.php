@@ -3,6 +3,7 @@
 namespace Tests;
 
 use App\Enums\UserRole;
+use App\Models\MobileUser;
 use App\Models\User;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
 use Laravel\Sanctum\Sanctum;
@@ -34,5 +35,42 @@ abstract class TestCase extends BaseTestCase
     protected function actingAsAdmin(?User $user = null): static
     {
         return $this->actingAsUser($user ?? User::factory()->make(['role' => UserRole::Admin]));
+    }
+
+    /**
+     * Symfony's test client sends `Accept-Language: en-us` on every request,
+     * which `SetLocale` would honour. Mobile tests state the language they
+     * expect instead of inheriting that.
+     */
+    protected function inSerbian(): static
+    {
+        return $this->withHeader('Accept-Language', 'sr');
+    }
+
+    /**
+     * Authenticate as a user of the external mobile app. Persisted, because
+     * every mobile endpoint reads the caller's own row.
+     */
+    protected function actingAsMobileUser(?MobileUser $user = null): MobileUser
+    {
+        $user ??= MobileUser::factory()->create();
+
+        Sanctum::actingAs($user);
+
+        return $user;
+    }
+
+    /**
+     * A real bearer token for a mobile user -- for the endpoints that read
+     * `currentAccessToken()->id` (device, logout), which Sanctum::actingAs's
+     * TransientToken does not have.
+     *
+     * @return array{0: MobileUser, 1: string}
+     */
+    protected function mobileUserWithToken(?MobileUser $user = null): array
+    {
+        $user ??= MobileUser::factory()->create();
+
+        return [$user, $user->createToken(MobileUser::TOKEN_NAME)->plainTextToken];
     }
 }

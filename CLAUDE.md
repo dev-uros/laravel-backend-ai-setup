@@ -129,6 +129,13 @@ not invent a service and repository for it.
   `Authorization: Bearer`. Everything authenticated sits in the one
   `auth:sanctum` group in `routes/api.php` — add new routes there rather than
   repeating the middleware.
+- **Two audiences.** `users` (staff: the SPA and the internal mobile app) and
+  `mobile_users` (customers: the external mobile app, under `/api/mobile/v1`,
+  sign-in by emailed code, Google or Apple, Serbian/English by
+  `Accept-Language`). Both mint Sanctum tokens, so each authenticated group
+  states its audience (`EnsureInternalUser` / `EnsureMobileUser`) and
+  `AudienceSeparationTest` checks every route. Read
+  `.ai/rules/mobile-users.md` before touching either side.
 - **Every response goes through `App\Http\Responses\ApiResponse`** —
   `{message, data}`, `message` always first and written for a human in the
   project's user-facing language, `data` always present and `null` when empty.

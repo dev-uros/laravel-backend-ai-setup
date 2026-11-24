@@ -3,12 +3,20 @@
 namespace Database\Seeders;
 
 use App\Data\ActorData;
+use App\Data\MobileUser\NewMobileUserData;
+use App\Data\MobileUserDevice\RegisterMobileUserDeviceData;
+use App\Enums\AppLocale;
+use App\Enums\DevicePlatform;
 use App\Data\User\UpdateUserAvatarData;
 use App\Enums\LoginOutcome;
 use App\Enums\UserLogEvent;
 use App\Enums\UserRole;
+use App\Models\MobileUser;
 use App\Models\User;
+use App\Repositories\Contracts\MobileUserRepositoryInterface;
 use App\Services\Auth\RecordLoginAttemptService;
+use App\Services\MobileUser\BlockMobileUserService;
+use App\Services\MobileUserDevice\RegisterMobileUserDeviceService;
 use App\Services\User\UpdateUserAvatarService;
 use App\Services\UserLog\RecordUserLogService;
 use Carbon\CarbonImmutable;
@@ -77,6 +85,7 @@ class DemoDataSeeder extends Seeder
         $this->switchedOff();
         $this->promoted();
         $this->strangersAtTheDoor();
+        $this->appUsers();
 
         $this->command?->info('Demo data seeded. Every account signs in with the password "'.self::PASSWORD.'".');
     }
@@ -420,6 +429,59 @@ class DemoDataSeeder extends Seeder
      * @param  Closure(): T  $work
      * @return T
      */
+    /**
+     * Six accounts of the external mobile app, for the admin panel's "Korisnici
+     * aplikacije": signed up by code, with Google and with Apple, one blocked,
+     * one with no name, one store-review account. Made through the repository
+     * and the services the app's sign-up goes through, with the clock faked.
+     */
+    private function appUsers(): void
+    {
+        $mobileUsers = app(MobileUserRepositoryInterface::class);
+        $registerDevice = app(RegisterMobileUserDeviceService::class);
+
+        $accounts = [
+            ['jelena.kovac@example.com', 'jelena', 'Jelena', 'Kovač', true, null, null, 30, DevicePlatform::Ios],
+            ['petar.markovic@gmail.com', 'pera.m', 'Petar', 'Marković', false, 'google-demo-1', null, 21, DevicePlatform::Android],
+            ['m.ilic@icloud.com', 'milan_i', 'Milan', null, true, null, 'apple-demo-1', 14, DevicePlatform::Ios],
+            ['spam.nalog@example.com', 'spamer', null, null, false, null, null, 9, DevicePlatform::Android],
+            ['tamara@example.com', 'tamara', 'Tamara', 'Lukić', false, null, null, 3, null],
+            ['review@example.com', 'review_demo', null, null, false, null, null, 1, DevicePlatform::Ios],
+        ];
+
+        foreach ($accounts as [$email, $username, $firstName, $lastName, $showName, $googleId, $appleId, $daysAgo, $platform]) {
+            $this->at($this->moment($daysAgo, 9, $daysAgo * 7), function () use ($mobileUsers, $registerDevice, $email, $username, $firstName, $lastName, $showName, $googleId, $appleId, $platform): void {
+                $user = $mobileUsers->create(new NewMobileUserData(
+                    email: $email,
+                    username: $username,
+                    locale: $email === 'tamara@example.com' ? AppLocale::En : AppLocale::Sr,
+                    firstName: $firstName,
+                    lastName: $lastName,
+                    displayPersonalName: $showName,
+                    googleId: $googleId,
+                    appleId: $appleId,
+                ));
+
+                if ($platform !== null) {
+                    $registerDevice->handle($user->id, $user->createToken(MobileUser::TOKEN_NAME)->accessToken->id, new RegisterMobileUserDeviceData(
+                        deviceId: 'demo-'.$username,
+                        platform: $platform,
+                        name: $platform === DevicePlatform::Ios ? 'iPhone 16' : 'Galaxy S25',
+                        operatingSystem: $platform === DevicePlatform::Ios ? 'iOS' : 'Android',
+                        osVersion: $platform === DevicePlatform::Ios ? '27.1' : '16',
+                    ));
+                }
+            });
+        }
+
+        MobileUser::query()->where('email', 'review@example.com')->update(['is_demo' => true]);
+
+        $this->at($this->moment(2, 16, 40), fn () => app(BlockMobileUserService::class)->handle(
+            (int) MobileUser::query()->where('email', 'spam.nalog@example.com')->value('id'),
+            $this->admin->id,
+        ));
+    }
+
     private function at(CarbonImmutable $when, Closure $work): mixed
     {
         Carbon::setTestNow($when);

@@ -6,6 +6,8 @@ use App\Enums\LoginOutcome;
 use App\Enums\UserLogEvent;
 use App\Enums\UserRole;
 use App\Models\LoginAttempt;
+use App\Models\MobileUser;
+use App\Models\MobileUserDevice;
 use App\Models\User;
 use App\Models\UserLog;
 use Database\Seeders\DemoDataSeeder;
@@ -195,5 +197,21 @@ class DemoDataSeederTest extends TestCase
         $this->seed(DemoDataSeeder::class);
 
         $this->assertSame($before, [User::query()->count(), UserLog::query()->count(), LoginAttempt::query()->count()]);
+    }
+
+    public function test_it_creates_app_users_in_every_state_the_admin_page_shows(): void
+    {
+        $this->seedDemo();
+
+        $users = MobileUser::query()->get();
+
+        $this->assertCount(6, $users);
+        $this->assertSame(1, $users->whereNotNull('blocked_at')->count());
+        $this->assertSame(1, $users->where('is_demo', true)->count());
+        $this->assertSame(1, $users->whereNotNull('google_id')->count());
+        $this->assertSame(1, $users->whereNotNull('apple_id')->count());
+        $this->assertSame(0, MobileUser::query()->where('email', 'spam.nalog@example.com')->sole()->tokens()->count(), 'blocking revoked the session');
+        $this->assertSame(5, MobileUserDevice::query()->count());
+        $this->assertGreaterThan(20, (int) $users->max('created_at')->diffInDays($users->min('created_at'), absolute: true));
     }
 }

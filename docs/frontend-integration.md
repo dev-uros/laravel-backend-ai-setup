@@ -96,6 +96,12 @@ Uz to ide 32 zapisa u istoriji izmena i preko 100 prijava — uspešnih, promaš
 lozinki, jedna na isključen nalog, i pet na adrese koje ne postoje (te nemaju
 korisnika i vidljive su samo u bazi, ne kroz `/users/{id}/logins`).
 
+Pored toga, šest naloga **korisnika aplikacije** (eksterna mobilna aplikacija,
+strana „Korisnici aplikacije"): sa imenom i bez, preko Google-a i Apple-a, jedan
+**blokiran** (`spam.nalog@example.com`), jedan na engleskom i jedan review nalog
+(`review@example.com`, `is_demo`). Oni nemaju lozinku — prijavljuju se kodom iz
+aplikacije.
+
 Ponovno pokretanje ništa ne duplira. Za čist početak: `make fresh` pa `make demo`.
 
 ---
@@ -352,13 +358,16 @@ Samo za internu mobilnu aplikaciju — web ništa od ovoga ne šalje i ne mora.
   409 kad obaveštenja na njemu nisu uključena.
 - Podešavanje stvarnog slanja (Expo projekat, Firebase, APNs, `EXPO_ACCESS_TOKEN`)
   opisano je u mobilnom repou: `docs/push-notifications.md`.
-- **Minimalna verzija aplikacije:** `GET /mobile/app-version/{ios|android}`
-  je javan (bez tokena) — aplikacija ga pita pri pokretanju i pri svakom
-  povratku u prvi plan, pre prijave. `minimum_version` je najstarija verzija
-  koja sme da radi (`null` = nema minimuma); starija aplikacija prikazuje samo
-  ekran „Potrebno je ažuriranje" sa linkom `store_url`. Vrednosti su u `.env`
-  (`MOBILE_*`, vidi `config/mobile.php`). Minimum se diže tek kad je nova
-  verzija već dostupna u toj prodavnici.
+- **Minimalna verzija aplikacije:**
+  `GET /mobile/app-version/{internal|external}/{ios|android}` je javan (bez
+  tokena) — aplikacija ga pita pri pokretanju i pri svakom povratku u prvi
+  plan, pre prijave. Interna aplikacija pita `internal`, eksterna (za kupce)
+  `external`; svaka ima svoj minimum jer izlaze nezavisno. `minimum_version` je
+  najstarija verzija koja sme da radi (`null` = nema minimuma); starija
+  aplikacija prikazuje samo ekran „Potrebno je ažuriranje" sa linkom
+  `store_url`. Vrednosti su u `.env` (`MOBILE_INTERNAL_*`, `MOBILE_EXTERNAL_*`,
+  vidi `config/mobile.php`). Minimum se diže tek kad je nova verzija već
+  dostupna u toj prodavnici.
 
 ---
 
@@ -490,6 +499,28 @@ U istoriji izmena `actor` je uvek prisutan; `null` znači da je izmenu napravio
 sistem (seeder, konzolna komanda, scheduler), a ne da je autor nepoznat.
 `old_values` i `new_values` su objekti sa samo onim poljima koja su se
 promenila, ili `null` kad događaj nema šta da uporedi.
+
+### Korisnici aplikacije (eksterna mobilna aplikacija)
+
+Nalozi kupaca iz eksterne mobilne aplikacije su **posebna tabela**
+(`mobile_users`), ne `users`. Njihov token ne prolazi ni na jednu rutu ovog
+panela (403), a token zaposlenog ne prolazi na rute aplikacije.
+
+| šta | ruta | ko |
+| --- | --- | --- |
+| lista, pretraga | `GET /mobile-users?search=&blocked=&page=` | svi |
+| detalj | `GET /mobile-users/{id}` | svi |
+| uređaji | `GET /mobile-users/{id}/devices` | svi |
+| blokiranje | `POST /mobile-users/{id}/block` | admin |
+| odblokiranje | `POST /mobile-users/{id}/unblock` | admin |
+
+- Lista je paginirana (25, najnoviji prvi), kao istorije gore. `search` traži
+  po delu korisničkog imena, imena, prezimena ili mejla; `blocked=1` samo
+  blokirani, `blocked=0` samo aktivni. Obrisani nalozi se ne vide.
+- Admin ne menja profil kupca — to radi vlasnik iz aplikacije. Jedina izmena
+  je blokiranje: odjavljuje nalog sa svih telefona i odbija ga dok se ne
+  odblokira. Ponovno blokiranje blokiranog naloga ne menja ništa (200).
+- `is_demo` označava nalog za App Store / Play review (`mobile:demo-accounts`).
 
 ---
 
