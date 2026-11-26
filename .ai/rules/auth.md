@@ -18,4 +18,4 @@ Two things must stay true of a failed login, and both have tests:
 
 The login route is throttled (`throttle:10,1`). Keep a throttle on any endpoint that rewards guessing.
 
-Sanctum stores a SHA-256 of the token; the plain value is returned once and never again. Tokens do not expire by default — set `config/sanctum.php` `expiration` if that is wanted.
+Sanctum stores a SHA-256 of the token; the plain value is returned once and never again. Tokens do not expire. Do not set `config/sanctum.php` `expiration`: it is global, so it would also sign out the external app's users, whose tokens never expire by the user's decision (`.ai/rules/mobile-users.md`). Ask first.

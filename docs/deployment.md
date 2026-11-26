@@ -194,6 +194,26 @@ Popuni ovo, ostalo ima razuman default:
 | `REDIS_PASSWORD` | `openssl rand -base64 32` |
 | `MAIL_*` | podaci tvog SMTP provajdera |
 
+Ako projekat ima mobilne aplikacije, popuni i blok **Mobile apps** — prazan ne
+obara deploy, nego tiho gasi funkciju, pa se propust vidi tek na telefonu:
+
+| Ključ | Šta ide | Prazno znači |
+| --- | --- | --- |
+| `MOBILE_*_MINIMUM_VERSION`, `MOBILE_*_STORE_URL` | najstarija dozvoljena verzija i link ka prodavnici, po aplikaciji i platformi | nema prinudnog update-a |
+| `GOOGLE_OAUTH_CLIENT_IDS`, `APPLE_*` | iz Google Cloud / Apple Developer naloga (eksterna aplikacija, njen `docs/sign-in.md`) | Google / Apple prijava vraća 503 |
+| `MOBILE_DEMO_EMAILS`, `MOBILE_DEMO_CODE` | nalozi za App Store / Play review i njihov fiksni kod | reviewer dobija kod mejlom koji ne može da pročita — aplikacija se odbija |
+| `EXPO_ACCESS_TOKEN` | samo ako je na expo.dev uključen enhanced push security | push se šalje bez tokena |
+
+Posle prvog deploya, i ponovo pred **svako** slanje na review (vraća obrisan ili
+blokiran demo nalog):
+
+```bash
+make prod-artisan c="mobile:demo-accounts"
+```
+
+Adrese i kod upiši u App Store Connect (App Review Information) i Play Console
+(App access).
+
 `ACME_EMAIL`, `GRAFANA_DOMAIN` i retencija logova ovde **ne postoje** — to su
 odluke infra repoa, ne ove aplikacije.
 

@@ -18,8 +18,9 @@ use Illuminate\Support\Facades\Notification;
  * registering, so the cooldown, the hash and the demo exception cannot drift
  * between them.
  *
- * - **Cooldown:** a code less than a minute old is not replaced; the caller
- *   gets a 429 with how long to wait (`Retry-After`). The route throttles sit
+ * - **Cooldown:** a code younger than `MobileOtpCode::RESEND_AFTER_SECONDS`
+ *   (30 s) is not replaced; the caller gets a 429 with how long to wait
+ *   (`Retry-After`). The route throttles sit
  *   above this per address and per IP.
  * - **One live code per address:** a new one replaces the old, attempts at 0.
  * - **Only the hash is stored**; the plain code exists in the mail alone, which
